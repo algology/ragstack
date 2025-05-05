@@ -13,6 +13,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import * as pdfjsLib from "pdfjs-dist";
+import { supabase } from "@/lib/supabaseClient";
+import { File, FileText } from "lucide-react";
+
+interface UploadedDocument {
+  id: number;
+  name: string;
+}
 
 export default function Chat() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -20,11 +28,35 @@ export default function Chat() {
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState<
+    UploadedDocument[]
+  >([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     import("pdfjs-dist").then((pdfjsLib) => {
       pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
     });
+  }, []);
+
+  useEffect(() => {
+    const fetchDocuments = async () => {
+      setFetchError(null);
+      console.log("Fetching documents...");
+      const { data, error } = await supabase
+        .from("documents")
+        .select("id, name")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching documents:", error);
+        setFetchError("Could not load document list.");
+      } else if (data) {
+        console.log("Fetched documents:", data);
+        setUploadedDocuments(data);
+      }
+    };
+    fetchDocuments();
   }, []);
 
   const { messages, input, handleInputChange, handleSubmit, isLoading } =
@@ -109,6 +141,10 @@ export default function Chat() {
         setUploadStatus(
           `Successfully uploaded and processed ${fileName}. Document ID: ${result.documentId}`
         );
+        setUploadedDocuments((prevDocs) => [
+          { id: result.documentId, name: fileName },
+          ...prevDocs,
+        ]);
       } else {
         setUploadStatus(`Upload failed: ${result.error || "Unknown error"}`);
         console.error("Upload failed:", result);
@@ -137,8 +173,8 @@ export default function Chat() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar for Upload */}
-        <aside className="w-1/4 p-4 border-r overflow-y-auto">
+        {/* Sidebar for Upload and Doc List */}
+        <aside className="w-1/4 p-4 border-r flex flex-col space-y-4 overflow-y-auto">
           <Card>
             <CardHeader>
               <CardTitle>Upload Document</CardTitle>
@@ -167,6 +203,40 @@ export default function Chat() {
                 <p className="text-sm text-muted-foreground">{uploadStatus}</p>
               </CardFooter>
             )}
+          </Card>
+
+          <Card className="flex-1 flex flex-col">
+            <CardHeader>
+              <CardTitle>Uploaded Documents</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden">
+              {fetchError && (
+                <p className="text-sm text-destructive">{fetchError}</p>
+              )}
+              {uploadedDocuments.length === 0 && !fetchError ? (
+                <p className="text-sm text-muted-foreground">
+                  No documents uploaded yet.
+                </p>
+              ) : (
+                <ScrollArea className="h-full">
+                  <ul className="space-y-2 pr-3">
+                    {uploadedDocuments.map((doc) => (
+                      <li
+                        key={doc.id}
+                        className="flex items-center space-x-2 text-sm p-1 rounded hover:bg-muted break-all"
+                      >
+                        {doc.name.toLowerCase().endsWith(".pdf") ? (
+                          <File size={16} className="flex-shrink-0" />
+                        ) : (
+                          <FileText size={16} className="flex-shrink-0" />
+                        )}
+                        <span title={doc.name}>{doc.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              )}
+            </CardContent>
           </Card>
         </aside>
 
