@@ -19,6 +19,7 @@ export default function Chat() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     import("pdfjs-dist").then((pdfjsLib) => {
@@ -31,6 +32,14 @@ export default function Chat() {
       api: "/api/chat",
       // Optional: Add initial messages or other config
     });
+
+  // Effect to scroll to bottom when messages change
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop =
+        messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -163,7 +172,11 @@ export default function Chat() {
 
         {/* Main Chat Area */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          <ScrollArea className="flex-1 p-4">
+          {/* Make this div scrollable and take up available space */}
+          <div
+            ref={messagesContainerRef}
+            className="flex-1 overflow-y-auto p-4"
+          >
             <div className="space-y-4">
               {messages.map((m) => (
                 <div
@@ -195,7 +208,7 @@ export default function Chat() {
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
 
           <div className="p-4 border-t">
             <form
