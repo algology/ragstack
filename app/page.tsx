@@ -1,103 +1,220 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useRef, useEffect } from "react";
+import { useChat } from "ai/react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
+export default function Chat() {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    import("pdfjs-dist").then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+    });
+  }, []);
+
+  const { messages, input, handleInputChange, handleSubmit, isLoading } =
+    useChat({
+      api: "/api/chat",
+      // Optional: Add initial messages or other config
+    });
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      setSelectedFile(event.target.files[0]);
+      setUploadStatus(""); // Clear previous status
+    }
+  };
+
+  const extractTextFromPdf = async (file: File): Promise<string> => {
+    const pdfjsLib = await import("pdfjs-dist");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText =
+        textContent.items
+          ?.map((item) => ("str" in item ? item.str : ""))
+          .join(" \n") ?? "";
+      fullText += pageText + " \n";
+    }
+    return fullText;
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      setUploadStatus("Please select a file first.");
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadStatus(`Processing ${selectedFile.name}...`);
+
+    let textContent = "";
+    let fileName = selectedFile.name;
+
+    try {
+      if (selectedFile.type === "application/pdf") {
+        textContent = await extractTextFromPdf(selectedFile);
+      } else if (selectedFile.type === "text/plain") {
+        textContent = await selectedFile.text();
+      } else {
+        throw new Error("Unsupported file type.");
+      }
+
+      if (!textContent.trim()) {
+        throw new Error("Could not extract text from file.");
+      }
+
+      setUploadStatus(`Uploading extracted text from ${fileName}...`);
+
+      // Send filename and text content to the backend
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ fileName: fileName, textContent: textContent }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setUploadStatus(
+          `Successfully uploaded and processed ${fileName}. Document ID: ${result.documentId}`
+        );
+      } else {
+        setUploadStatus(`Upload failed: ${result.error || "Unknown error"}`);
+        console.error("Upload failed:", result);
+      }
+    } catch (error) {
+      console.error("Processing/Upload error:", error);
+      setUploadStatus(
+        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      setSelectedFile(null);
+    }
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="flex flex-col h-screen bg-background text-foreground">
+      {/* Header - Can add title or logo here */}
+      <header className="p-4 border-b">
+        <h1 className="text-xl font-semibold">
+          Chat with your Docs (RAG Demo)
+        </h1>
+      </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar for Upload */}
+        <aside className="w-1/4 p-4 border-r overflow-y-auto">
+          <Card>
+            <CardHeader>
+              <CardTitle>Upload Document</CardTitle>
+              <CardDescription>
+                Upload a text or PDF file to chat with.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                disabled={isUploading}
+                accept=".txt,.pdf"
+              />
+              <Button
+                onClick={handleUpload}
+                disabled={!selectedFile || isUploading}
+                className="w-full"
+              >
+                {isUploading ? "Processing/Uploading..." : "Upload File"}
+              </Button>
+            </CardContent>
+            {uploadStatus && (
+              <CardFooter>
+                <p className="text-sm text-muted-foreground">{uploadStatus}</p>
+              </CardFooter>
+            )}
+          </Card>
+        </aside>
+
+        {/* Main Chat Area */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <ScrollArea className="flex-1 p-4">
+            <div className="space-y-4">
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`flex ${
+                    m.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <Card
+                    className={`max-w-xs lg:max-w-md ${
+                      m.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted"
+                    }`}
+                  >
+                    <CardContent className="p-3">
+                      <p className="text-sm whitespace-pre-wrap">{m.content}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              ))}
+              {isLoading && messages[messages.length - 1]?.role === "user" && (
+                <div className="flex justify-start">
+                  <Card className="max-w-xs lg:max-w-md bg-muted animate-pulse">
+                    <CardContent className="p-3">
+                      <p className="text-sm">Thinking...</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+
+          <div className="p-4 border-t">
+            <form
+              onSubmit={handleSubmit}
+              className="flex items-center space-x-2"
+            >
+              <Input
+                value={input}
+                onChange={handleInputChange}
+                placeholder="Ask a question about the document..."
+                disabled={isLoading}
+              />
+              <Button type="submit" disabled={isLoading}>
+                Send
+              </Button>
+            </form>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
