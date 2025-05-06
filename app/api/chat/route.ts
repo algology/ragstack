@@ -5,6 +5,13 @@ import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
 import { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
 
+// --- Configuration Constants ---
+const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
+const GROQ_CHAT_MODEL = "llama3-8b-8192";
+const SIMILARITY_THRESHOLD = 0.7;
+const MATCH_COUNT = 5;
+// -----------------------------
+
 export const runtime = "edge"; // Use edge runtime for Vercel AI SDK
 
 // Initialize OpenAI client for embeddings (can use Vercel's adapter too if preferred)
@@ -25,6 +32,11 @@ Context:
 {context}`;
 
 export async function POST(req: NextRequest) {
+  // TODO: Get authenticated user ID (e.g., from Supabase session)
+  // const { data: { user }, error: authError } = await supabase.auth.getUser();
+  // if (authError || !user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); }
+  // const userId = user.id;
+
   try {
     const { messages }: { messages: Message[] } = await req.json();
     const lastUserMessage = messages[messages.length - 1]?.content;
@@ -38,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Get embedding for the user query using OpenAI
     const embeddingResponse = await openaiEmbeddings.embeddings.create({
-      model: "text-embedding-ada-002",
+      model: OPENAI_EMBEDDING_MODEL,
       input: lastUserMessage,
     });
     const queryEmbedding = embeddingResponse.data[0].embedding;
@@ -48,8 +60,10 @@ export async function POST(req: NextRequest) {
       "match_document_chunks",
       {
         query_embedding: queryEmbedding,
-        match_threshold: 0.7,
-        match_count: 5,
+        match_threshold: SIMILARITY_THRESHOLD,
+        match_count: MATCH_COUNT,
+        // TODO: Pass user ID to the RPC function
+        // input_user_id: userId
       }
     );
 
@@ -80,7 +94,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Call Groq API for streaming response
     const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: GROQ_CHAT_MODEL,
       stream: true,
       messages: groqMessages,
     });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useChat } from "ai/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,9 +13,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import * as pdfjsLib from "pdfjs-dist";
 import { supabase } from "@/lib/supabaseClient";
 import { File, FileText } from "lucide-react";
+import { UploadDropzone } from "@/components/upload-dropzone";
+import { ModeToggle } from "@/components/mode-toggle";
 
 interface UploadedDocument {
   id: number;
@@ -26,18 +27,11 @@ export default function Chat() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [uploadedDocuments, setUploadedDocuments] = useState<
     UploadedDocument[]
   >([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
-
-  useEffect(() => {
-    import("pdfjs-dist").then((pdfjsLib) => {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-    });
-  }, []);
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -73,30 +67,34 @@ export default function Chat() {
     }
   }, [messages]);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      setSelectedFile(event.target.files[0]);
-      setUploadStatus(""); // Clear previous status
-    }
-  };
+  const handleFileSelected = useCallback((file: File) => {
+    setSelectedFile(file);
+    setUploadStatus("");
+    console.log("File selected:", file.name);
+  }, []);
 
-  const extractTextFromPdf = async (file: File): Promise<string> => {
-    const pdfjsLib = await import("pdfjs-dist");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText =
-        textContent.items
-          ?.map((item) => ("str" in item ? item.str : ""))
-          .join(" \n") ?? "";
-      fullText += pageText + " \n";
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    if (file.type === "application/pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText =
+          textContent.items
+            ?.map((item) => ("str" in item ? item.str : ""))
+            .join(" \n") ?? "";
+        fullText += pageText + " \n";
+      }
+      return fullText;
+    } else if (file.type === "text/plain") {
+      return await file.text();
+    } else {
+      throw new Error("Unsupported file type passed to extraction.");
     }
-    return fullText;
   };
 
   const handleUpload = async () => {
@@ -112,13 +110,7 @@ export default function Chat() {
     let fileName = selectedFile.name;
 
     try {
-      if (selectedFile.type === "application/pdf") {
-        textContent = await extractTextFromPdf(selectedFile);
-      } else if (selectedFile.type === "text/plain") {
-        textContent = await selectedFile.text();
-      } else {
-        throw new Error("Unsupported file type.");
-      }
+      textContent = await extractTextFromFile(selectedFile);
 
       if (!textContent.trim()) {
         throw new Error("Could not extract text from file.");
@@ -126,7 +118,6 @@ export default function Chat() {
 
       setUploadStatus(`Uploading extracted text from ${fileName}...`);
 
-      // Send filename and text content to the backend
       const response = await fetch("/api/upload", {
         method: "POST",
         headers: {
@@ -145,6 +136,7 @@ export default function Chat() {
           { id: result.documentId, name: fileName },
           ...prevDocs,
         ]);
+        setSelectedFile(null);
       } else {
         setUploadStatus(`Upload failed: ${result.error || "Unknown error"}`);
         console.error("Upload failed:", result);
@@ -156,20 +148,17 @@ export default function Chat() {
       );
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      setSelectedFile(null);
     }
   };
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
-      {/* Header - Can add title or logo here */}
-      <header className="p-4 border-b">
+      {/* Updated Header */}
+      <header className="p-4 border-b flex justify-between items-center">
         <h1 className="text-xl font-semibold">
           Chat with your Docs (RAG Demo)
         </h1>
+        <ModeToggle />
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -183,12 +172,10 @@ export default function Chat() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                disabled={isUploading}
+              <UploadDropzone
+                onFileSelect={handleFileSelected}
                 accept=".txt,.pdf"
+                disabled={isUploading}
               />
               <Button
                 onClick={handleUpload}
