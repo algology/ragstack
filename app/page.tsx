@@ -14,7 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
-import { File, FileText } from "lucide-react";
+import { File, FileText, XCircle } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
 
@@ -32,6 +32,12 @@ export default function Chat() {
     UploadedDocument[]
   >([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(
+    null
+  );
+  const [selectedDocumentName, setSelectedDocumentName] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -56,7 +62,12 @@ export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } =
     useChat({
       api: "/api/chat",
-      // Optional: Add initial messages or other config
+      body: {
+        documentId:
+          selectedDocumentId !== null ? String(selectedDocumentId) : undefined,
+        documentName:
+          selectedDocumentName !== null ? selectedDocumentName : undefined,
+      },
     });
 
   // Effect to scroll to bottom when messages change
@@ -207,17 +218,42 @@ export default function Chat() {
               ) : (
                 <ScrollArea className="h-full">
                   <ul className="space-y-2 pr-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`w-full justify-start text-xs mb-2 rounded hover:bg-muted ${
+                        selectedDocumentId === null
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                          : "hover:bg-muted"
+                      }`}
+                      onClick={() => {
+                        setSelectedDocumentId(null);
+                        setSelectedDocumentName(null);
+                      }}
+                      disabled={isLoading}
+                    >
+                      Chat with All Documents
+                    </Button>
                     {uploadedDocuments.map((doc) => (
                       <li
                         key={doc.id}
-                        className="flex items-center space-x-2 text-sm p-1 rounded hover:bg-muted break-all"
+                        className={`flex items-center space-x-2 text-sm p-1 rounded break-all cursor-pointer ${
+                          selectedDocumentId === doc.id
+                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                            : "hover:bg-muted"
+                        }`}
+                        onClick={() => {
+                          setSelectedDocumentId(doc.id);
+                          setSelectedDocumentName(doc.name);
+                        }}
+                        title={doc.name}
                       >
                         {doc.name.toLowerCase().endsWith(".pdf") ? (
                           <File size={16} className="flex-shrink-0" />
                         ) : (
                           <FileText size={16} className="flex-shrink-0" />
                         )}
-                        <span title={doc.name}>{doc.name}</span>
+                        <span>{doc.name}</span>
                       </li>
                     ))}
                   </ul>
@@ -229,6 +265,15 @@ export default function Chat() {
 
         {/* Main Chat Area */}
         <main className="flex-1 flex flex-col overflow-hidden">
+          {/* Context Header */}
+          <div className="p-2 px-4 border-b bg-muted/30">
+            <p className="text-sm font-medium text-muted-foreground">
+              {selectedDocumentName
+                ? `Chatting with: ${selectedDocumentName}`
+                : "Chatting with: All Documents"}
+            </p>
+          </div>
+
           {/* Make this div scrollable and take up available space */}
           <div
             ref={messagesContainerRef}

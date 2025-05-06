@@ -31,6 +31,13 @@ Be concise and informative.
 Context:
 {context}`;
 
+// Define the expected request body structure
+interface ChatRequestBody {
+  messages: Message[];
+  documentId?: string;
+  documentName?: string; // <-- Add documentName
+}
+
 export async function POST(req: NextRequest) {
   // TODO: Get authenticated user ID (e.g., from Supabase session)
   // const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -38,7 +45,9 @@ export async function POST(req: NextRequest) {
   // const userId = user.id;
 
   try {
-    const { messages }: { messages: Message[] } = await req.json();
+    // Parse the request body, including the optional documentId and documentName
+    const { messages, documentId, documentName }: ChatRequestBody =
+      await req.json();
     const lastUserMessage = messages[messages.length - 1]?.content;
 
     if (!lastUserMessage) {
@@ -55,16 +64,30 @@ export async function POST(req: NextRequest) {
     });
     const queryEmbedding = embeddingResponse.data[0].embedding;
 
-    // 2. Find relevant document chunks in Supabase
+    // 2. Prepare parameters for the Supabase RPC call
+    const rpcParams: {
+      query_embedding: number[];
+      match_threshold: number;
+      match_count: number;
+      filter_document_id?: string; // Add optional filter parameter
+      // input_user_id?: string; // Keep potential user filtering
+    } = {
+      query_embedding: queryEmbedding,
+      match_threshold: SIMILARITY_THRESHOLD,
+      match_count: MATCH_COUNT,
+      // TODO: Pass user ID to the RPC function
+      // input_user_id: userId
+    };
+
+    // Add the document ID filter if it was provided in the request
+    if (documentId) {
+      rpcParams.filter_document_id = documentId;
+    }
+
+    // Find relevant document chunks in Supabase, potentially filtered
     const { data: chunks, error: matchError } = await supabase.rpc(
       "match_document_chunks",
-      {
-        query_embedding: queryEmbedding,
-        match_threshold: SIMILARITY_THRESHOLD,
-        match_count: MATCH_COUNT,
-        // TODO: Pass user ID to the RPC function
-        // input_user_id: userId
-      }
+      rpcParams // Pass the potentially modified params object
     );
 
     if (matchError) {
@@ -75,10 +98,24 @@ export async function POST(req: NextRequest) {
     const context =
       chunks && chunks.length > 0
         ? chunks.map((chunk: any) => chunk.content).join("\n\n---\n\n")
-        : "No relevant context found.";
+        : "No relevant context found."; // Or: "No relevant context found in the specified document."
 
     // 3. Prepare messages for Groq, ensuring correct type
-    const formattedSystemPrompt = SYSTEM_PROMPT.replace("{context}", context);
+    // Dynamically create the system prompt based on whether a specific document is selected
+    let finalSystemPrompt = SYSTEM_PROMPT; // Default prompt
+    if (documentName) {
+      finalSystemPrompt = `You are a helpful AI assistant. You answer questions about the document "${documentName}" based on the context provided below.
+If the context does not contain the answer, state that you cannot answer the question based on the provided information about "${documentName}".
+Be concise and informative.
+
+Context specific to "${documentName}":
+{context}`;
+    }
+
+    const formattedSystemPrompt = finalSystemPrompt.replace(
+      "{context}",
+      context
+    );
     const groqMessages: ChatCompletionMessageParam[] = [
       { role: "system", content: formattedSystemPrompt },
       ...messages
