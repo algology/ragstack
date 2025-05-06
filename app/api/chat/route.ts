@@ -7,7 +7,7 @@ import { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions"
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GROQ_CHAT_MODEL = "llama3-8b-8192";
+const GROQ_CHAT_MODEL = "llama-3.3-70b-versatile";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 5;
 // -----------------------------

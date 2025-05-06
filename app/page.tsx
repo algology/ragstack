@@ -243,25 +243,26 @@ export default function Chat() {
                   }`}
                 >
                   <Card
-                    className={`max-w-xs lg:max-w-md ${
+                    className={`max-w-xs lg:max-w-md py-1 ${
                       m.role === "user"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted"
                     }`}
                   >
-                    <CardContent className="p-3">
+                    <CardContent className="py-1 px-3">
                       <p className="text-sm whitespace-pre-wrap">{m.content}</p>
                     </CardContent>
                   </Card>
                 </div>
               ))}
               {isLoading && messages[messages.length - 1]?.role === "user" && (
-                <div className="flex justify-start">
-                  <Card className="max-w-xs lg:max-w-md bg-muted animate-pulse">
-                    <CardContent className="p-3">
-                      <p className="text-sm">Thinking...</p>
-                    </CardContent>
-                  </Card>
+                <div className="flex justify-start p-3">
+                  <div className="flex space-x-1 justify-center items-center">
+                    <span className="sr-only">Thinking...</span>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>
+                  </div>
                 </div>
               )}
             </div>
