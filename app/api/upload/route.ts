@@ -103,7 +103,8 @@ export async function POST(req: NextRequest) {
 
     const chunkData = chunks.map((chunk, index) => ({
       document_id: documentId,
-      content: chunk,
+      // Sanitize the chunk content by removing NULL characters (\u0000)
+      content: chunk.replace(/\u0000/g, ""),
       embedding: allEmbeddings[index],
       // TODO: Add user_id here as well
       // user_id: userId
