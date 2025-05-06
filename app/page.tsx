@@ -14,7 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
-import { File, FileText, XCircle } from "lucide-react";
+import { File, FileText, XCircle, Trash2 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
@@ -204,6 +204,47 @@ export default function Chat() {
     }
   };
 
+  const handleDeleteDocument = async (docId: number, docName: string) => {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${docName}"? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setUploadStatus(`Deleting ${docName}...`);
+    try {
+      const response = await fetch(`/api/documents/${docId}`, {
+        method: "DELETE",
+      });
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setUploadStatus(`Successfully deleted ${docName}.`);
+        setUploadedDocuments((prevDocs) =>
+          prevDocs.filter((doc) => doc.id !== docId)
+        );
+        if (selectedDocumentId === docId) {
+          setSelectedDocumentId(null);
+          setSelectedDocumentName(null);
+        }
+      } else {
+        setUploadStatus(
+          `Failed to delete ${docName}: ${result.error || "Unknown error"}`
+        );
+        console.error("Delete failed:", result);
+      }
+    } catch (error) {
+      console.error("Delete document error:", error);
+      setUploadStatus(
+        `Error deleting ${docName}: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
       {/* Updated Header */}
@@ -295,7 +336,25 @@ export default function Chat() {
                         ) : (
                           <FileText size={16} className="flex-shrink-0" />
                         )}
-                        <span>{doc.name}</span>
+                        <span className="flex-1 min-w-0 truncate text-xs">
+                          {doc.name}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 p-0 hover:bg-destructive/20 flex-shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent li onClick from firing
+                            handleDeleteDocument(doc.id, doc.name);
+                          }}
+                          title={`Delete ${doc.name}`}
+                          disabled={isLoading}
+                        >
+                          <Trash2
+                            size={14}
+                            className="text-destructive/70 hover:text-destructive"
+                          />
+                        </Button>
                       </li>
                     ))}
                   </ul>
