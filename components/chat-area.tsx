@@ -1,0 +1,102 @@
+import React from "react";
+import { type Message as AIMessage } from "@ai-sdk/react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import ChatMessage, { type SourceChunk } from "@/components/chat-message";
+
+// Props for ChatArea component
+interface ChatAreaProps {
+  messages: AIMessage[];
+  input: string;
+  handleInputChange: (
+    e:
+      | React.ChangeEvent<HTMLInputElement>
+      | React.ChangeEvent<HTMLTextAreaElement>
+  ) => void;
+  handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  isLoading: boolean;
+  error: Error | undefined;
+  selectedDocumentName: string | null;
+  messagesContainerRef: React.RefObject<HTMLDivElement | null>;
+  messageChunksMap: Record<string, SourceChunk[]>;
+}
+
+const ChatArea: React.FC<ChatAreaProps> = ({
+  messages,
+  input,
+  handleInputChange,
+  handleSubmit,
+  isLoading,
+  error,
+  selectedDocumentName,
+  messagesContainerRef,
+  messageChunksMap,
+}) => {
+  return (
+    <main className="flex-1 flex flex-col overflow-hidden">
+      {/* Context Header */}
+      <div className="p-2 px-4 border-b bg-muted/30 flex items-center justify-between">
+        <p className="text-sm font-medium text-muted-foreground">
+          {selectedDocumentName
+            ? `Chatting with: ${selectedDocumentName}`
+            : "Chatting with: All Documents"}
+        </p>
+      </div>
+
+      {/* Message list area */}
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
+        <TooltipProvider delayDuration={100}>
+          <div className="space-y-4">
+            {messages.map((m) => {
+              const chunksForThisMessage = messageChunksMap[m.id] || [];
+
+              return (
+                <ChatMessage
+                  key={m.id}
+                  message={m}
+                  sourceChunksForMessage={chunksForThisMessage}
+                />
+              );
+            })}
+            {isLoading &&
+              messages.length > 0 &&
+              messages[messages.length - 1]?.role === "user" && (
+                <div className="flex justify-start p-3">
+                  <div className="flex space-x-1 justify-center items-center">
+                    <span className="sr-only">Thinking...</span>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>
+                  </div>
+                </div>
+              )}
+            {error && (
+              <div className="p-4 text-destructive">
+                <p>Error: {error.message}</p>
+              </div>
+            )}
+          </div>
+        </TooltipProvider>
+      </div>
+
+      {/* Message input form */}
+      <div className="p-4 border-t">
+        <form onSubmit={handleSubmit} className="flex items-center space-x-2">
+          <Input
+            value={input}
+            onChange={handleInputChange}
+            placeholder="Ask a question about the document..."
+            disabled={isLoading}
+          />
+          <Button type="submit" disabled={isLoading}>
+            Send
+          </Button>
+        </form>
+      </div>
+    </main>
+  );
+};
+
+export default ChatArea;

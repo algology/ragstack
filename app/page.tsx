@@ -2,41 +2,16 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useChat, type Message as AIMessage } from "@ai-sdk/react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  File,
-  FileText,
-  XCircle,
-  Trash2,
-  PanelLeftClose,
-  PanelLeftOpen,
-} from "lucide-react";
-import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import React from "react";
+import Sidebar from "@/components/sidebar";
+import ChatArea from "@/components/chat-area";
 
-// Define a type for our source chunks if not already available
+// MODIFIED: Temporarily re-define SourceChunk here. Ideally, import from a shared types file or chat-area.tsx if exported.
 interface SourceChunk {
-  id: string | number; // Or whatever type your chunk ID is
+  id: string | number;
   content: string;
-  // Add other relevant fields from your chunks if needed
 }
 
 interface UploadedDocument {
@@ -60,6 +35,10 @@ export default function Chat() {
     string | null
   >(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [messageChunksMap, setMessageChunksMap] = useState<{
+    [key: string]: SourceChunk[];
+  }>({});
+  const currentStreamDataRef = useRef<SourceChunk[] | undefined>(undefined);
 
   const {
     messages,
@@ -83,23 +62,104 @@ export default function Chat() {
         console.error("useChat - onResponse Error:", response.statusText);
       }
     },
-    onFinish: (message) => {
-      console.log("useChat - onFinish triggered. Final data:", data);
-      console.log("useChat - onFinish triggered. Final message:", message);
+    onFinish: (message: AIMessage) => {
+      console.log(
+        "useChat - onFinish. Full message object:",
+        JSON.stringify(message, null, 2)
+      );
+      console.log(
+        "useChat - onFinish. message.data property value:",
+        JSON.stringify(message.data, null, 2)
+      );
+      console.log(
+        "useChat - onFinish. Top-level data (from useChat() scope) value at onFinish:",
+        data
+      );
+      console.log(
+        "useChat - onFinish. currentStreamDataRef.current value at onFinish:",
+        currentStreamDataRef.current
+      );
+
+      let chunksForMessage: SourceChunk[] | undefined = undefined;
+
+      // 1. Try to get chunks from message.data (ideal if SDK populates this reliably)
+      if (
+        message.data &&
+        Array.isArray(message.data) &&
+        message.data.length > 0
+      ) {
+        chunksForMessage = message.data as unknown as SourceChunk[];
+        console.log(
+          `Chunks for message ID ${message.id} will be taken from message.data:`,
+          chunksForMessage
+        );
+      }
+      // 2. Else, try using currentStreamDataRef.current (latched from useEffect [data])
+      else if (
+        currentStreamDataRef.current &&
+        currentStreamDataRef.current.length > 0
+      ) {
+        chunksForMessage = currentStreamDataRef.current;
+        console.log(
+          `Chunks for message ID ${message.id} will be taken from currentStreamDataRef.current:`,
+          chunksForMessage
+        );
+      }
+      // 3. Fallback to top-level data from useChat scope (least likely to work based on logs)
+      else if (data && Array.isArray(data) && data.length > 0) {
+        chunksForMessage = data as unknown as SourceChunk[];
+        console.log(
+          `Chunks for message ID ${message.id} will be taken from top-level data (from useChat scope):`,
+          chunksForMessage
+        );
+      }
+
+      if (message.role === "assistant" && chunksForMessage) {
+        setMessageChunksMap((prevMap) => ({
+          ...prevMap,
+          [message.id]: chunksForMessage,
+        }));
+        console.log(
+          `Successfully stored chunks for assistant message ID ${message.id}. Chunks:`,
+          chunksForMessage
+        );
+      } else if (message.role === "assistant") {
+        console.log(
+          `No suitable chunk data found to store for assistant message ID ${
+            message.id
+          }. message.data was: ${JSON.stringify(
+            message.data
+          )}, currentStreamDataRef.current was: ${JSON.stringify(
+            currentStreamDataRef.current
+          )}, top-level data was: ${JSON.stringify(data)}.`
+        );
+      }
     },
     onError: (error) => {
       console.error("useChat - onError triggered:", error);
     },
   });
 
+  // useEffect to capture streaming data into currentStreamDataRef.current
   useEffect(() => {
-    if (data !== undefined) {
+    if (isLoading && data && Array.isArray(data) && data.length > 0) {
+      // Only update if we are actively loading (streaming) and have data
       console.log(
-        "Data from useChat (@ai-sdk/react) hook updated:",
-        JSON.stringify(data, null, 2)
+        "useEffect [data, isLoading]: Stream active and data available. Updating currentStreamDataRef.current:",
+        data
       );
+      currentStreamDataRef.current = data as unknown as SourceChunk[];
+    } else if (!isLoading) {
+      // When loading stops (stream ends), clear the ref.
+      // This ensures it's clean for the next message and onFinish doesn't use stale data from a previous stream
+      // if it somehow runs after this effect but before the next stream starts.
+      console.log(
+        "useEffect [data, isLoading]: Stream stopped. Clearing currentStreamDataRef.current. Was:",
+        currentStreamDataRef.current
+      );
+      currentStreamDataRef.current = undefined;
     }
-  }, [data]);
+  }, [data, isLoading]); // Dependency array is just data and isLoading
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -265,336 +325,37 @@ export default function Chat() {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Sidebar for Upload and Doc List */}
-        <aside
-          className={`relative border-r flex flex-col space-y-4 overflow-y-auto transition-all duration-300 ease-in-out ${
-            isSidebarOpen ? "w-1/4 p-4" : "w-12 p-2 border-r"
-          }`}
-        >
-          {/* Card visibility also tied to sidebar state for cleaner collapse */}
-          <div
-            className={`flex-1 flex flex-col space-y-4 ${
-              isSidebarOpen ? "opacity-100" : "opacity-0 hidden"
-            } transition-opacity duration-150`}
-          >
-            <Card>
-              <CardHeader>
-                <CardTitle>Upload Document</CardTitle>
-                <CardDescription>
-                  Upload a text or PDF file to chat with.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <UploadDropzone
-                  onFileSelect={handleFileSelected}
-                  accept=".txt,.pdf"
-                  disabled={isUploading}
-                />
-                <Button
-                  onClick={handleUpload}
-                  disabled={!selectedFile || isUploading}
-                  className="w-full"
-                >
-                  {isUploading ? "Processing/Uploading..." : "Upload File"}
-                </Button>
-              </CardContent>
-              {uploadStatus && (
-                <CardFooter>
-                  <p className="text-sm text-muted-foreground">
-                    {uploadStatus}
-                  </p>
-                </CardFooter>
-              )}
-            </Card>
-
-            <Card className="flex-1 flex flex-col">
-              <CardHeader>
-                <CardTitle>Uploaded Documents</CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-hidden">
-                {fetchError && (
-                  <p className="text-sm text-destructive">{fetchError}</p>
-                )}
-                {uploadedDocuments.length === 0 && !fetchError ? (
-                  <p className="text-sm text-muted-foreground">
-                    No documents uploaded yet.
-                  </p>
-                ) : (
-                  <ScrollArea className="h-full">
-                    <ul className="space-y-2 pr-3">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`w-full justify-start text-xs mb-2 rounded hover:bg-muted ${
-                          selectedDocumentId === null
-                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "hover:bg-muted"
-                        }`}
-                        onClick={() => {
-                          setSelectedDocumentId(null);
-                          setSelectedDocumentName(null);
-                        }}
-                        disabled={isLoading}
-                      >
-                        Chat with All Documents
-                      </Button>
-                      {uploadedDocuments.map((doc) => (
-                        <li
-                          key={doc.id}
-                          className={`flex items-center space-x-2 text-sm p-1 rounded break-all cursor-pointer ${
-                            selectedDocumentId === doc.id
-                              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                              : "hover:bg-muted"
-                          }`}
-                          onClick={() => {
-                            setSelectedDocumentId(doc.id);
-                            setSelectedDocumentName(doc.name);
-                          }}
-                          title={doc.name}
-                        >
-                          {doc.name.toLowerCase().endsWith(".pdf") ? (
-                            <File size={16} className="flex-shrink-0" />
-                          ) : (
-                            <FileText size={16} className="flex-shrink-0" />
-                          )}
-                          <span className="flex-1 min-w-0 truncate text-xs">
-                            {doc.name}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 p-0 hover:bg-destructive/20 flex-shrink-0"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteDocument(doc.id, doc.name);
-                            }}
-                            title={`Delete ${doc.name}`}
-                            disabled={isLoading}
-                          >
-                            <Trash2
-                              size={14}
-                              className="text-destructive/70 hover:text-destructive"
-                            />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  </ScrollArea>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Collapse/Expand Button - New structure for bottom placement */}
-          <div
-            className={`pt-2 ${
-              isSidebarOpen
-                ? "border-t flex justify-end"
-                : "flex-1 flex justify-center items-end pb-1"
-            }`}
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
-              className="h-8 w-8 p-1.5"
-            >
-              {isSidebarOpen ? (
-                <PanelLeftClose size={18} />
-              ) : (
-                <PanelLeftOpen size={18} />
-              )}
-            </Button>
-          </div>
-        </aside>
+        <Sidebar
+          isSidebarOpen={isSidebarOpen}
+          setIsSidebarOpen={setIsSidebarOpen}
+          uploadedDocuments={uploadedDocuments}
+          selectedDocumentId={selectedDocumentId}
+          setSelectedDocumentId={setSelectedDocumentId}
+          selectedDocumentName={selectedDocumentName}
+          setSelectedDocumentName={setSelectedDocumentName}
+          handleFileSelected={handleFileSelected}
+          handleUpload={handleUpload}
+          handleDeleteDocument={handleDeleteDocument}
+          isUploading={isUploading}
+          uploadStatus={uploadStatus}
+          fetchError={fetchError}
+          isLoading={isLoading}
+          selectedFile={selectedFile}
+        />
 
         {/* Main Chat Area */}
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Context Header */}
-          <div className="p-2 px-4 border-b bg-muted/30 flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">
-              {selectedDocumentName
-                ? `Chatting with: ${selectedDocumentName}`
-                : "Chatting with: All Documents"}
-            </p>
-          </div>
-
-          {/* Make this div scrollable and take up available space */}
-          <div
-            ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto p-4"
-          >
-            <TooltipProvider delayDuration={100}>
-              <div className="space-y-4">
-                {messages.map((m, index) => {
-                  // Determine if this is the last assistant message
-                  const isLastAssistantMessage =
-                    m.role === "assistant" && index === messages.length - 1;
-                  // Use the top-level 'data' object (which should be the chunks array) for the last assistant message
-                  const chunksForThisMessage =
-                    isLastAssistantMessage && Array.isArray(data)
-                      ? (data as unknown as SourceChunk[])
-                      : []; // Otherwise, no chunks
-
-                  return (
-                    <ChatMessage
-                      key={m.id}
-                      message={m}
-                      sourceChunksForMessage={chunksForThisMessage} // Pass the correctly determined chunks
-                    />
-                  );
-                })}
-                {isLoading &&
-                  messages.length > 0 &&
-                  messages[messages.length - 1]?.role === "user" && (
-                    <div className="flex justify-start p-3">
-                      <div className="flex space-x-1 justify-center items-center">
-                        <span className="sr-only">Thinking...</span>
-                        <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                        <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                        <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            </TooltipProvider>
-          </div>
-
-          <div className="p-4 border-t">
-            <form
-              onSubmit={handleSubmit}
-              className="flex items-center space-x-2"
-            >
-              <Input
-                value={input}
-                onChange={handleInputChange}
-                placeholder="Ask a question about the document..."
-                disabled={isLoading}
-              />
-              <Button type="submit" disabled={isLoading}>
-                Send
-              </Button>
-            </form>
-          </div>
-        </main>
+        <ChatArea
+          messages={messages}
+          input={input}
+          handleInputChange={handleInputChange}
+          handleSubmit={handleSubmit}
+          isLoading={isLoading}
+          error={error}
+          selectedDocumentName={selectedDocumentName}
+          messagesContainerRef={messagesContainerRef}
+          messageChunksMap={messageChunksMap}
+        />
       </div>
-    </div>
-  );
-}
-
-// --- Helper Component for Rendering Messages with Citations ---
-
-interface ChatMessageProps {
-  message: AIMessage;
-  sourceChunksForMessage: SourceChunk[];
-}
-
-function ChatMessage({ message, sourceChunksForMessage }: ChatMessageProps) {
-  const sourceChunks = sourceChunksForMessage;
-
-  const renderContentWithCitations = (content: string) => {
-    if (content.startsWith("__CHAT_DATA__")) return null;
-
-    if (!sourceChunks || sourceChunks.length === 0) {
-      return <p className="text-sm whitespace-pre-wrap">{content}</p>;
-    }
-
-    const citationRegex = /\s*\[(\d+(?:,\s*\d+)*)\]/g;
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = citationRegex.exec(content)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(message.content.substring(lastIndex, match.index));
-      }
-      const citationNumbers = match[1]
-        .split(",")
-        .map((num) => parseInt(num.trim(), 10));
-      const citationElements = citationNumbers.map((num, idx) => {
-        const chunkIndex = num - 1;
-        const chunk = sourceChunks[chunkIndex];
-
-        if (!chunk) {
-          return (
-            <sup
-              key={`missing-${message.id}-${num}-${idx}`}
-              className="text-destructive font-bold"
-            >
-              [{num}]?
-            </sup>
-          );
-        }
-        return (
-          <Tooltip key={`${message.id}-cite-${num}-${idx}`}>
-            <TooltipTrigger asChild>
-              <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-gray-400 text-primary-foreground text-xs font-bold cursor-pointer mx-0.5 align-middle">
-                {num}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent
-              side="top"
-              align="start"
-              className="max-w-sm w-auto p-2 bg-background border text-foreground shadow-lg rounded-md"
-            >
-              <p className="text-xs whitespace-pre-wrap">
-                <span className="font-semibold">
-                  Source {num} (ID: {chunk.id || "N/A"}):
-                </span>
-                {chunk.content}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        );
-      });
-      const combinedCitations: React.ReactNode[] = [];
-      citationElements.forEach((elem, idx) => {
-        if (idx > 0)
-          combinedCitations
-            .push
-            // No comma needed between badges, spacing is handled by margin
-            ();
-        combinedCitations.push(elem);
-      });
-      parts.push(
-        <span key={`cite-group-${message.id}-${match!.index}`}>
-          {combinedCitations}
-        </span>
-      );
-      lastIndex = citationRegex.lastIndex;
-    }
-    if (lastIndex < content.length) {
-      parts.push(content.substring(lastIndex));
-    }
-    return (
-      <p className="text-sm whitespace-pre-wrap">
-        {parts.map((part, i) => (
-          <React.Fragment key={i}>{part}</React.Fragment>
-        ))}
-      </p>
-    );
-  };
-
-  return (
-    <div
-      className={`flex ${
-        message.role === "user" ? "justify-end" : "justify-start"
-      }`}
-    >
-      <Card
-        className={`max-w-xs lg:max-w-md py-1 ${
-          message.role === "user"
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted"
-        }`}
-      >
-        <CardContent className="py-1 px-3">
-          {message.role === "assistant" ? (
-            renderContentWithCitations(message.content)
-          ) : (
-            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
