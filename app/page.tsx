@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useChat } from "ai/react";
+import { useChat, type Message as AIMessage } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +17,20 @@ import { supabase } from "@/lib/supabaseClient";
 import { File, FileText, XCircle } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import React from "react";
+
+// Define a type for our source chunks if not already available
+interface SourceChunk {
+  id: string | number; // Or whatever type your chunk ID is
+  content: string;
+  // Add other relevant fields from your chunks if needed
+}
 
 interface UploadedDocument {
   id: number;
@@ -39,6 +53,46 @@ export default function Chat() {
     string | null
   >(null);
 
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    error,
+    data,
+  } = useChat({
+    api: "/api/chat",
+    body: {
+      documentId:
+        selectedDocumentId !== null ? String(selectedDocumentId) : undefined,
+      documentName:
+        selectedDocumentName !== null ? selectedDocumentName : undefined,
+    },
+    onResponse: (response) => {
+      console.log("useChat - onResponse received:", response);
+      if (!response.ok) {
+        console.error("useChat - onResponse Error:", response.statusText);
+      }
+    },
+    onFinish: (message) => {
+      console.log("useChat - onFinish triggered. Final data:", data);
+      console.log("useChat - onFinish triggered. Final message:", message);
+    },
+    onError: (error) => {
+      console.error("useChat - onError triggered:", error);
+    },
+  });
+
+  useEffect(() => {
+    if (data !== undefined) {
+      console.log(
+        "Data from useChat (@ai-sdk/react) hook updated:",
+        JSON.stringify(data, null, 2)
+      );
+    }
+  }, [data]);
+
   useEffect(() => {
     const fetchDocuments = async () => {
       setFetchError(null);
@@ -59,18 +113,6 @@ export default function Chat() {
     fetchDocuments();
   }, []);
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading } =
-    useChat({
-      api: "/api/chat",
-      body: {
-        documentId:
-          selectedDocumentId !== null ? String(selectedDocumentId) : undefined,
-        documentName:
-          selectedDocumentName !== null ? selectedDocumentName : undefined,
-      },
-    });
-
-  // Effect to scroll to bottom when messages change
   useEffect(() => {
     if (messagesContainerRef.current) {
       messagesContainerRef.current.scrollTop =
@@ -279,38 +321,40 @@ export default function Chat() {
             ref={messagesContainerRef}
             className="flex-1 overflow-y-auto p-4"
           >
-            <div className="space-y-4">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex ${
-                    m.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <Card
-                    className={`max-w-xs lg:max-w-md py-1 ${
-                      m.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    }`}
-                  >
-                    <CardContent className="py-1 px-3">
-                      <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                    </CardContent>
-                  </Card>
-                </div>
-              ))}
-              {isLoading && messages[messages.length - 1]?.role === "user" && (
-                <div className="flex justify-start p-3">
-                  <div className="flex space-x-1 justify-center items-center">
-                    <span className="sr-only">Thinking...</span>
-                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                    <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                    <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <TooltipProvider delayDuration={100}>
+              <div className="space-y-4">
+                {messages.map((m, index) => {
+                  // Determine if this is the last assistant message
+                  const isLastAssistantMessage =
+                    m.role === "assistant" && index === messages.length - 1;
+                  // Use the top-level 'data' object (which should be the chunks array) for the last assistant message
+                  const chunksForThisMessage =
+                    isLastAssistantMessage && Array.isArray(data)
+                      ? (data as unknown as SourceChunk[])
+                      : []; // Otherwise, no chunks
+
+                  return (
+                    <ChatMessage
+                      key={m.id}
+                      message={m}
+                      sourceChunksForMessage={chunksForThisMessage} // Pass the correctly determined chunks
+                    />
+                  );
+                })}
+                {isLoading &&
+                  messages.length > 0 &&
+                  messages[messages.length - 1]?.role === "user" && (
+                    <div className="flex justify-start p-3">
+                      <div className="flex space-x-1 justify-center items-center">
+                        <span className="sr-only">Thinking...</span>
+                        <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                        <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                        <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>
+                      </div>
+                    </div>
+                  )}
+              </div>
+            </TooltipProvider>
           </div>
 
           <div className="p-4 border-t">
@@ -331,6 +375,123 @@ export default function Chat() {
           </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+// --- Helper Component for Rendering Messages with Citations ---
+
+interface ChatMessageProps {
+  message: AIMessage;
+  sourceChunksForMessage: SourceChunk[];
+}
+
+function ChatMessage({ message, sourceChunksForMessage }: ChatMessageProps) {
+  const sourceChunks = sourceChunksForMessage;
+
+  const renderContentWithCitations = (content: string) => {
+    if (content.startsWith("__CHAT_DATA__")) return null;
+
+    if (!sourceChunks || sourceChunks.length === 0) {
+      return <p className="text-sm whitespace-pre-wrap">{content}</p>;
+    }
+
+    const citationRegex = /\s*\[(\d+(?:,\s*\d+)*)\]/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = citationRegex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(message.content.substring(lastIndex, match.index));
+      }
+      const citationNumbers = match[1]
+        .split(",")
+        .map((num) => parseInt(num.trim(), 10));
+      const citationElements = citationNumbers.map((num, idx) => {
+        const chunkIndex = num - 1;
+        const chunk = sourceChunks[chunkIndex];
+
+        if (!chunk) {
+          return (
+            <sup
+              key={`missing-${message.id}-${num}-${idx}`}
+              className="text-destructive font-bold"
+            >
+              [{num}]?
+            </sup>
+          );
+        }
+        return (
+          <Tooltip key={`${message.id}-cite-${num}-${idx}`}>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-gray-400 text-primary-foreground text-xs font-bold cursor-pointer mx-0.5 align-middle">
+                {num}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="start"
+              className="max-w-sm w-auto p-2 bg-background border text-foreground shadow-lg rounded-md"
+            >
+              <p className="text-xs whitespace-pre-wrap">
+                <span className="font-semibold">
+                  Source {num} (ID: {chunk.id || "N/A"}):
+                </span>
+                {chunk.content}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        );
+      });
+      const combinedCitations: React.ReactNode[] = [];
+      citationElements.forEach((elem, idx) => {
+        if (idx > 0)
+          combinedCitations
+            .push
+            // No comma needed between badges, spacing is handled by margin
+            ();
+        combinedCitations.push(elem);
+      });
+      parts.push(
+        <span key={`cite-group-${message.id}-${match!.index}`}>
+          {combinedCitations}
+        </span>
+      );
+      lastIndex = citationRegex.lastIndex;
+    }
+    if (lastIndex < content.length) {
+      parts.push(content.substring(lastIndex));
+    }
+    return (
+      <p className="text-sm whitespace-pre-wrap">
+        {parts.map((part, i) => (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ))}
+      </p>
+    );
+  };
+
+  return (
+    <div
+      className={`flex ${
+        message.role === "user" ? "justify-end" : "justify-start"
+      }`}
+    >
+      <Card
+        className={`max-w-xs lg:max-w-md py-1 ${
+          message.role === "user"
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted"
+        }`}
+      >
+        <CardContent className="py-1 px-3">
+          {message.role === "assistant" ? (
+            renderContentWithCitations(message.content)
+          ) : (
+            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { OpenAI } from "openai";
 import Groq from "groq-sdk";
-import { Message } from "ai";
+import { Message, StreamData } from "ai";
 import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
 import { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
@@ -24,98 +24,124 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-const SYSTEM_PROMPT = `You are a helpful AI assistant. You answer questions based on the context provided.
+// System prompt templates - these are correct for instructing the LLM
+const SYSTEM_PROMPT_TEMPLATE = `You are a helpful AI assistant. You answer questions based *only* on the context provided below.
+The context consists of numbered documents chunks (e.g., [1], [2], ...).
+When you use information from a specific chunk to answer the question, you MUST cite the chunk number(s) in square brackets, like [1] or [2, 3], immediately after the information.
 If the context does not contain the answer, state that you cannot answer the question based on the provided information.
 Be concise and informative.
 
 Context:
 {context}`;
 
+const SYSTEM_PROMPT_TEMPLATE_WITH_DOC = `You are a helpful AI assistant. You answer questions about the document "{documentName}" based *only* on the context provided below.
+The context consists of numbered documents chunks (e.g., [1], [2], ...) specific to "{documentName}".
+When you use information from a specific chunk to answer the question, you MUST cite the chunk number(s) in square brackets, like [1] or [2, 3], immediately after the information.
+If the context does not contain the answer, state that you cannot answer the question based on the provided information about "{documentName}".
+Be concise and informative.
+
+Context specific to "{documentName}":
+{context}`;
+
 // Define the expected request body structure
 interface ChatRequestBody {
   messages: Message[];
   documentId?: string;
-  documentName?: string; // <-- Add documentName
+  documentName?: string;
 }
 
 export async function POST(req: NextRequest) {
-  // TODO: Get authenticated user ID (e.g., from Supabase session)
-  // const { data: { user }, error: authError } = await supabase.auth.getUser();
-  // if (authError || !user) { return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); }
-  // const userId = user.id;
-
+  console.log("API_CHAT: Received POST request"); // 1. Log request entry
   try {
-    // Parse the request body, including the optional documentId and documentName
     const { messages, documentId, documentName }: ChatRequestBody =
       await req.json();
-    const lastUserMessage = messages[messages.length - 1]?.content;
+    console.log("API_CHAT: Parsed request body:", {
+      documentId,
+      documentName,
+      messagesLength: messages.length,
+    }); // 2. Log parsed body
 
+    const lastUserMessage = messages[messages.length - 1]?.content;
     if (!lastUserMessage) {
+      console.error("API_CHAT: No user message found");
       return new Response(JSON.stringify({ error: "No user message found" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
+    console.log("API_CHAT: Last user message:", lastUserMessage); // 3. Log user message
 
-    // 1. Get embedding for the user query using OpenAI
     const embeddingResponse = await openaiEmbeddings.embeddings.create({
       model: OPENAI_EMBEDDING_MODEL,
       input: lastUserMessage,
     });
     const queryEmbedding = embeddingResponse.data[0].embedding;
+    console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
 
-    // 2. Prepare parameters for the Supabase RPC call
-    const rpcParams: {
-      query_embedding: number[];
-      match_threshold: number;
-      match_count: number;
-      filter_document_id?: string; // Add optional filter parameter
-      // input_user_id?: string; // Keep potential user filtering
-    } = {
+    const rpcParams: any = {
       query_embedding: queryEmbedding,
       match_threshold: SIMILARITY_THRESHOLD,
       match_count: MATCH_COUNT,
-      // TODO: Pass user ID to the RPC function
-      // input_user_id: userId
     };
-
-    // Add the document ID filter if it was provided in the request
     if (documentId) {
       rpcParams.filter_document_id = documentId;
+      console.log(
+        "API_CHAT: Adding filter_document_id to RPC params:",
+        documentId
+      ); // 5. Log if documentId is used
     }
 
-    // Find relevant document chunks in Supabase, potentially filtered
+    console.log(
+      "API_CHAT: Calling Supabase RPC 'match_document_chunks' with params:",
+      rpcParams
+    );
     const { data: chunks, error: matchError } = await supabase.rpc(
       "match_document_chunks",
-      rpcParams // Pass the potentially modified params object
+      rpcParams
     );
 
     if (matchError) {
-      console.error("Error matching chunks:", matchError);
-      throw new Error("Failed to retrieve relevant document chunks");
+      console.error(
+        "API_CHAT: Error from Supabase RPC 'match_document_chunks':",
+        JSON.stringify(matchError, null, 2)
+      ); // 6a. Critical log for Supabase error
+      // Also log the rpcParams that caused the error
+      console.error(
+        "API_CHAT: RPC Params that caused error:",
+        JSON.stringify(rpcParams, null, 2)
+      );
+      throw new Error(
+        `Failed to retrieve relevant document chunks: ${matchError.message}`
+      );
     }
+    console.log(
+      "API_CHAT: Supabase RPC successful. Chunks count:",
+      chunks?.length ?? 0
+    ); // 6b. Log RPC success
 
-    const context =
+    const numberedContext =
       chunks && chunks.length > 0
-        ? chunks.map((chunk: any) => chunk.content).join("\n\n---\n\n")
-        : "No relevant context found."; // Or: "No relevant context found in the specified document."
+        ? chunks
+            .map(
+              (chunk: any, index: number) => `[${index + 1}] ${chunk.content}`
+            )
+            .join("\n\n---\n\n")
+        : "No relevant context found.";
+    console.log("API_CHAT: Prepared numbered context for LLM"); // 7. Log context prep
 
-    // 3. Prepare messages for Groq, ensuring correct type
-    // Dynamically create the system prompt based on whether a specific document is selected
-    let finalSystemPrompt = SYSTEM_PROMPT; // Default prompt
+    let promptTemplate = SYSTEM_PROMPT_TEMPLATE;
     if (documentName) {
-      finalSystemPrompt = `You are a helpful AI assistant. You answer questions about the document "${documentName}" based on the context provided below.
-If the context does not contain the answer, state that you cannot answer the question based on the provided information about "${documentName}".
-Be concise and informative.
-
-Context specific to "${documentName}":
-{context}`;
+      promptTemplate = SYSTEM_PROMPT_TEMPLATE_WITH_DOC.replace(
+        "{documentName}",
+        documentName
+      );
     }
-
-    const formattedSystemPrompt = finalSystemPrompt.replace(
+    const formattedSystemPrompt = promptTemplate.replace(
       "{context}",
-      context
+      numberedContext
     );
+    console.log("API_CHAT: Prepared system prompt for LLM"); // 8. Log prompt prep
+
     const groqMessages: ChatCompletionMessageParam[] = [
       { role: "system", content: formattedSystemPrompt },
       ...messages
@@ -128,56 +154,76 @@ Context specific to "${documentName}":
           content: msg.content,
         })),
     ];
+    console.log("API_CHAT: Prepared messages for Groq"); // 9. Log Groq messages prep
 
-    // 4. Call Groq API for streaming response
-    const response = await groq.chat.completions.create({
+    const groqResponse = await groq.chat.completions.create({
       model: GROQ_CHAT_MODEL,
       stream: true,
       messages: groqMessages,
     });
+    console.log("API_CHAT: Received Groq stream response object"); // 10. Log Groq response received
 
-    // 5. Manually construct SSE stream
+    // --- Manual Streaming with Vercel AI SDK Data Prefix (2:) ---
     const encoder = new TextEncoder();
+    const streamData = new StreamData(); // Initialize StreamData from 'ai' package
+
     const readableStream = new ReadableStream({
       async start(controller) {
+        console.log("API_CHAT: ReadableStream started (data prefix 2:)");
         try {
-          for await (const chunk of response) {
+          // Send the chunks data using Vercel AI SDK prefix "2:"
+          // The Vercel AI SDK expects the JSON payload for prefix 2: to be an array.
+          const chunksToSend = chunks ?? [];
+          const initialDataChunk = `2:${JSON.stringify(chunksToSend)}\n`;
+          controller.enqueue(encoder.encode(initialDataChunk));
+          console.log(
+            "API_CHAT: Enqueued initial data with prefix 2:",
+            chunksToSend
+          );
+
+          for await (const chunk of groqResponse) {
             const content = chunk.choices[0]?.delta?.content;
             if (content) {
-              // Format as SSE message: data: {chunk}
-              // Vercel AI SDK expects specific format `0:"<text>"\n` for text chunks
-              const formattedChunk = `0:"${JSON.stringify(content).slice(
+              // Vercel AI SDK text chunks are prefixed with `0:`
+              // Ensure content is properly escaped for JSON string format.
+              const formattedTextChunk = `0:"${JSON.stringify(content).slice(
                 1,
                 -1
               )}"\n`;
-              controller.enqueue(encoder.encode(formattedChunk));
+              controller.enqueue(encoder.encode(formattedTextChunk));
             }
           }
-          // Optionally send finish message `0:""\n` or other stream data if needed
-        } catch (error) {
-          console.error("Error reading Groq stream:", error);
-          // Send error information in SSE format if possible/needed
-          const errorChunk = `1:"${JSON.stringify({
-            error: "Stream error",
-          }).slice(1, -1)}"\n`;
-          controller.enqueue(encoder.encode(errorChunk));
-          controller.error(error);
-        } finally {
+          console.log(
+            "API_CHAT: Finished iterating Groq stream (data prefix 2:)"
+          );
+          streamData.close(); // Close the StreamData instance when done
           controller.close();
+          console.log(
+            "API_CHAT: ReadableStream controller closed (data prefix 2:)"
+          );
+        } catch (error) {
+          console.error(
+            "API_CHAT: Error in ReadableStream processing (data prefix 2:):",
+            error
+          );
+          controller.error(error);
         }
       },
     });
 
-    // Return standard Response with correct headers for SSE
+    console.log(
+      "API_CHAT: Returning new Response object with manual stream (data prefix 2:)"
+    );
     return new Response(readableStream, {
       headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
+        // The Content-Type for Vercel AI SDK streams.
+        "Content-Type": "text/plain; charset=utf-8",
+        // This header signals to the Vercel AI SDK client that data is being streamed.
+        "X-Experimental-Stream-Data": "true",
       },
     });
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error("API_CHAT: Unhandled error in POST function:", error); // 17. Log any other unhandled error
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     return new Response(
