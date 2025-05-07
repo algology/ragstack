@@ -317,9 +317,7 @@ export default function Chat() {
     <div className="flex flex-col h-screen bg-background text-foreground">
       {/* Updated Header */}
       <header className="p-4 border-b flex justify-between items-center">
-        <h1 className="text-xl font-semibold">
-          Chat with your Docs (RAG Demo)
-        </h1>
+        <h1 className="text-xl font-semibold">RAG Template</h1>
         <ModeToggle />
       </header>
 
