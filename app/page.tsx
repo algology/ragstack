@@ -340,7 +340,7 @@ export default function Chat() {
     setUploadStatus(`Processing ${selectedFile.name}...`);
 
     let textContent = "";
-    let fileName = selectedFile.name;
+    const fileName = selectedFile.name;
 
     try {
       textContent = await extractTextFromFile(selectedFile);
@@ -441,7 +441,6 @@ export default function Chat() {
           uploadedDocuments={uploadedDocuments}
           selectedDocumentId={selectedDocumentId}
           setSelectedDocumentId={setSelectedDocumentId}
-          selectedDocumentName={selectedDocumentName}
           setSelectedDocumentName={setSelectedDocumentName}
           handleFileSelected={handleFileSelected}
           handleUpload={handleUpload}

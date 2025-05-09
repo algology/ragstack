@@ -2,7 +2,6 @@ import React from "react";
 import { type Message as AIMessage } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import ChatMessage, { type SourceChunk } from "@/components/chat-message";
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { OpenAI } from "openai";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import { PostgrestError } from "@supabase/postgrest-js";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
     console.log(
       `Inserting ${chunkData.length} chunks into Supabase in batches of ${supabaseBatchSize}...`
     );
-    let chunkError: any = null;
+    let chunkError: PostgrestError | null = null;
 
     for (let i = 0; i < chunkData.length; i += supabaseBatchSize) {
       const batch = chunkData.slice(i, i + supabaseBatchSize);

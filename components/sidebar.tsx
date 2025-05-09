@@ -29,7 +29,6 @@ interface SidebarProps {
   uploadedDocuments: UploadedDocument[];
   selectedDocumentId: number | null;
   setSelectedDocumentId: (id: number | null) => void;
-  selectedDocumentName: string | null;
   setSelectedDocumentName: (name: string | null) => void;
   handleFileSelected: (file: File) => void;
   handleUpload: () => void;
@@ -47,7 +46,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   uploadedDocuments,
   selectedDocumentId,
   setSelectedDocumentId,
-  selectedDocumentName,
   setSelectedDocumentName,
   handleFileSelected,
   handleUpload,

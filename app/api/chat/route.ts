@@ -50,6 +50,21 @@ interface ChatRequestBody {
   documentName?: string;
 }
 
+// Define types for RPC parameters and document chunks
+interface RpcParams {
+  query_embedding: number[];
+  match_threshold: number;
+  match_count: number;
+  filter_document_id?: string;
+}
+
+interface DocumentChunk {
+  content: string;
+  // id: string; // Example: If your chunks have an ID
+  // name: string; // Example: If your chunks have a name
+  // You can add any other relevant properties returned by your RPC
+}
+
 export async function POST(req: NextRequest) {
   console.log("API_CHAT: Received POST request"); // 1. Log request entry
   try {
@@ -78,7 +93,7 @@ export async function POST(req: NextRequest) {
     const queryEmbedding = embeddingResponse.data[0].embedding;
     console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
 
-    const rpcParams: any = {
+    const rpcParams: RpcParams = {
       query_embedding: queryEmbedding,
       match_threshold: SIMILARITY_THRESHOLD,
       match_count: MATCH_COUNT,
@@ -123,7 +138,7 @@ export async function POST(req: NextRequest) {
       chunks && chunks.length > 0
         ? chunks
             .map(
-              (chunk: any, index: number) => `[${index + 1}] ${chunk.content}`
+              (chunk: DocumentChunk, index: number) => `[${index + 1}] ${chunk.content}`
             )
             .join("\n\n---\n\n")
         : "No relevant context found.";

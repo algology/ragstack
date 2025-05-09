@@ -1,7 +1,6 @@
 import React from "react";
 import { type Message as AIMessage } from "@ai-sdk/react";
 import {
-  TooltipProvider, // Added to ensure Tooltip works correctly if it's the root
   Tooltip,
   TooltipTrigger,
   TooltipContent,
