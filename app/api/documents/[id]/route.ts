@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
+// Define an interface for the route context
+interface DeleteContext {
+  params: {
+    id: string;
+  };
+}
+
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: DeleteContext // Use the interface for the second argument
 ) {
-  const documentId = params.id;
+  const documentId = context.params.id; // Access id via context.params.id
 
   if (!documentId || isNaN(parseInt(documentId))) {
     return NextResponse.json({ error: "Invalid document ID" }, { status: 400 });
