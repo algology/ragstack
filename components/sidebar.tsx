@@ -84,8 +84,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* Content that hides/shows - Placed before the button so button can be pushed down by flex-1 content */}
       <div
-        className={`flex-1 flex flex-col space-y-4 ${
-          isSidebarOpen ? "opacity-100" : "opacity-0 invisible"
+        className={`flex flex-col space-y-4 ${
+          isSidebarOpen ? "flex-1 opacity-100" : "hidden"
         } transition-opacity duration-150`}
       >
         <Card>
@@ -196,7 +196,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Collapse/Expand Button - At the bottom of the aside flex container */}
       <div
-        className={`pt-2 ${
+        className={`mt-auto pt-2 ${
           isSidebarOpen
             ? "border-t flex justify-end"
             : "flex justify-center items-center w-full"
