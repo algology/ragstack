@@ -3,10 +3,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useChat, type Message as AIMessage } from "@ai-sdk/react";
 import { supabase } from "@/lib/supabaseClient";
-import { ModeToggle } from "@/components/mode-toggle";
 import React from "react";
 import Sidebar from "@/components/sidebar";
 import ChatArea from "@/components/chat-area";
+import Image from "next/image";
 
 // MODIFIED: Temporarily re-define SourceChunk here. Ideally, import from a shared types file or chat-area.tsx if exported.
 interface SourceChunk {
@@ -429,8 +429,10 @@ export default function Chat() {
     <div className="flex flex-col h-screen bg-background text-foreground">
       {/* Updated Header */}
       <header className="p-4 border-b flex justify-between items-center">
-        <h1 className="text-xl font-semibold">RAG Template</h1>
-        <ModeToggle />
+        {/* Wrapper div to center the logo */}
+        <div className="flex-grow flex justify-center">
+          <Image src="/logo.png" alt="Vinea Logo" width={110} height={50} />
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden relative">

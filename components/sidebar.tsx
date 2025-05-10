@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
+import { ModeToggle } from "@/components/mode-toggle";
 
 interface UploadedDocument {
   id: number;
@@ -159,18 +160,10 @@ const Sidebar: React.FC<SidebarProps> = ({
                       }}
                       title={doc.name}
                     >
-                      {doc.name.toLowerCase().endsWith(".pdf") ? (
-                        <File size={16} className="flex-shrink-0" />
-                      ) : (
-                        <FileText size={16} className="flex-shrink-0" />
-                      )}
-                      <span className="flex-1 min-w-0 truncate text-xs">
-                        {doc.name}
-                      </span>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 p-0 hover:bg-destructive/20 flex-shrink-0"
+                        className="h-6 w-6 p-0 hover:bg-destructive/20 flex-shrink-0 mr-2"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteDocument(doc.id, doc.name);
@@ -183,6 +176,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                           className="text-destructive/70 hover:text-destructive"
                         />
                       </Button>
+                      {doc.name.toLowerCase().endsWith(".pdf") ? (
+                        <File size={16} className="flex-shrink-0" />
+                      ) : (
+                        <FileText size={16} className="flex-shrink-0" />
+                      )}
+                      <span className="flex-1 min-w-0 truncate text-xs">
+                        {doc.name}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -196,11 +197,13 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div
         className={`mt-auto pt-2 ${
           isSidebarOpen
-            ? "border-t flex justify-end"
-            : "flex justify-center items-center w-full"
+            ? "border-t flex justify-end items-center space-x-2"
+            : "flex flex-col items-center space-y-2 w-full"
         }`}
       >
-        {/* Adjusted centering for collapsed state */}
+        <div className={`${!isSidebarOpen ? "hidden" : ""}`}>
+          <ModeToggle />
+        </div>
         <Button
           variant="ghost"
           size="icon"
