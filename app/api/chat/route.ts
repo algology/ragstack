@@ -57,14 +57,14 @@ interface RpcParams {
   query_embedding: number[];
   match_threshold: number;
   match_count: number;
-  filter_document_id?: string;
+  filter_document_id?: number;
 }
 
 interface DocumentChunk {
+  id: number; // Assuming ID is a number; or string if more appropriate
   content: string;
-  // id: string; // Example: If your chunks have an ID
-  // name: string; // Example: If your chunks have a name
-  // You can add any other relevant properties returned by your RPC
+  name: string; // Document name, expected by the client
+  // similarity: number; // This also comes from the DB, can be added if needed downstream
 }
 
 export async function POST(req: NextRequest) {
@@ -123,11 +123,18 @@ export async function POST(req: NextRequest) {
       match_count: MATCH_COUNT,
     };
     if (documentId) {
-      rpcParams.filter_document_id = documentId;
-      console.log(
-        "API_CHAT: Adding filter_document_id to RPC params:",
-        documentId
-      ); // 5. Log if documentId is used
+      const numericDocumentId = parseInt(documentId, 10);
+      if (!isNaN(numericDocumentId)) {
+        rpcParams.filter_document_id = numericDocumentId;
+        console.log(
+          "API_CHAT: Adding filter_document_id (numeric) to RPC params:",
+          numericDocumentId
+        ); // 5. Log if documentId is used
+      } else {
+        console.warn(
+          `API_CHAT: documentId '${documentId}' is not a valid number. Skipping filter.`
+        );
+      }
     }
 
     console.log(

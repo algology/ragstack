@@ -53,38 +53,38 @@ interface DocumentChunk {
 }
 
 // For demonstration - sample sources to display in tooltips when actual sources aren't available
-const DEMO_SOURCES: DocumentChunk[] = [
-  {
-    id: "1",
-    content:
-      "Wine is an alcoholic drink made from fermented grapes. Yeast consumes the sugar in the grapes and converts it to ethanol and carbon dioxide, releasing heat in the process.",
-    name: "Wine_Overview.pdf",
-  },
-  {
-    id: "2",
-    content:
-      "The earliest evidence of a wine production facility is the Areni-1 winery in Armenia and is at least 6,100 years old.",
-    name: "Wine_History.txt",
-  },
-  {
-    id: "3",
-    content:
-      "Wine grapes grow almost exclusively between 30 and 50 degrees latitude north and south of the equator.",
-    name: "Wine_Geography.pdf",
-  },
-  {
-    id: "4",
-    content:
-      "Wines made from fruits other than grapes include rice wine, pomegranate wine, apple wine and elderberry wine.",
-    name: "Wine_Varieties.txt",
-  },
-  {
-    id: "5",
-    content:
-      "Wine has been produced for thousands of years, with evidence of ancient wine production in Georgia from 8000 BC, Iran from 7000 BC, and Sicily from 4000 BC.",
-    name: "Wine_History.txt",
-  },
-];
+// const DEMO_SOURCES: DocumentChunk[] = [
+//   {
+//     id: "1",
+//     content:
+//       "Wine is an alcoholic drink made from fermented grapes. Yeast consumes the sugar in the grapes and converts it to ethanol and carbon dioxide, releasing heat in the process.",
+//     name: "Wine_Overview.pdf",
+//   },
+//   {
+//     id: "2",
+//     content:
+//       "The earliest evidence of a wine production facility is the Areni-1 winery in Armenia and is at least 6,100 years old.",
+//     name: "Wine_History.txt",
+//   },
+//   {
+//     id: "3",
+//     content:
+//       "Wine grapes grow almost exclusively between 30 and 50 degrees latitude north and south of the equator.",
+//     name: "Wine_Geography.pdf",
+//   },
+//   {
+//     id: "4",
+//     content:
+//       "Wines made from fruits other than grapes include rice wine, pomegranate wine, apple wine and elderberry wine.",
+//     name: "Wine_Varieties.txt",
+//   },
+//   {
+//     id: "5",
+//     content:
+//       "Wine has been produced for thousands of years, with evidence of ancient wine production in Georgia from 8000 BC, Iran from 7000 BC, and Sicily from 4000 BC.",
+//     name: "Wine_History.txt",
+//   },
+// ];
 
 // Message sources map type
 type MessageSourcesMap = Map<string, DocumentChunk[]>;
@@ -124,50 +124,97 @@ export default function ChatPage() {
     },
     onFinish: (message: ThreadMessage) => {
       if (message.role === "assistant") {
-        console.log("Assistant message finished. Message ID:", message.id);
+        console.log(
+          "CLIENT: Assistant message finished. Message ID:",
+          message.id
+        );
+        // Log the entire incoming message object to inspect its structure
+        console.log(
+          "CLIENT: Full assistant message object in onFinish:",
+          JSON.stringify(message, null, 2) // Keep this log for now, it's useful
+        );
 
-        // Attempt to access the StreamData
-        // The underlying runtime object might have internal properties that have the raw data
         try {
-          // The internal structure of the runtime object is not fully documented,
-          // but it likely has a _raw, _data, or similar internal field that contains the raw StreamData
-          // This is a hack to access it, and might be fragile if the library structure changes
-          const runtimeObj = runtime as any;
+          let sourcesToSet: DocumentChunk[] | undefined = undefined;
 
-          // Try various possible internal field names to find the StreamData
-          const possibleDataFields = [
-            "data",
-            "_data",
-            "streamData",
-            "_streamData",
-          ];
-
-          for (const field of possibleDataFields) {
-            if (runtimeObj[field] && runtimeObj[field].length > 0) {
+          // Access sources from message.metadata.unstable_data
+          if (
+            message.metadata &&
+            (message.metadata as any).unstable_data &&
+            Array.isArray((message.metadata as any).unstable_data)
+          ) {
+            const potentialSources = (message.metadata as any)
+              .unstable_data as any[];
+            // Basic check to see if the first item looks like a DocumentChunk
+            if (
+              potentialSources.length > 0 &&
+              typeof potentialSources[0] === "object" &&
+              potentialSources[0] !== null &&
+              "content" in potentialSources[0] && // Ensure 'content' property exists
+              ("name" in potentialSources[0] || "id" in potentialSources[0]) // Ensure 'name' or 'id' exists
+            ) {
               console.log(
-                `Found StreamData in runtime.${field}:`,
-                runtimeObj[field]
+                "CLIENT: Found sources in message.metadata.unstable_data:",
+                JSON.stringify(potentialSources, null, 2)
               );
-
-              // The first item should be our array of DocumentChunk
-              const sources = runtimeObj[field][0] as DocumentChunk[];
-              if (
-                Array.isArray(sources) &&
-                sources.length > 0 &&
-                "content" in sources[0]
-              ) {
-                // Store in our messageSources Map
-                setMessageSources((prevMap) => {
-                  const newMap = new Map(prevMap);
-                  newMap.set(message.id, sources);
-                  return newMap;
-                });
-                break;
-              }
+              // Ensure all required fields for DocumentChunk are present or provide defaults
+              sourcesToSet = potentialSources.map((src) => ({
+                id: src.id?.toString(), // Ensure id is string, if it exists
+                content: src.content,
+                name: src.name,
+                // similarity: src.similarity, // if you add similarity to DocumentChunk
+              })) as DocumentChunk[];
+            } else if (potentialSources.length === 0) {
+              console.log(
+                "CLIENT: message.metadata.unstable_data is an empty array."
+              );
+              sourcesToSet = []; // Explicitly set to empty array for this message
+            } else {
+              console.warn(
+                "CLIENT: Items in message.metadata.unstable_data do not look like DocumentChunk objects.",
+                JSON.stringify(potentialSources[0], null, 2) // Log the first item for inspection
+              );
             }
+          } else {
+            console.warn(
+              "CLIENT: message.metadata.unstable_data is missing or not an array."
+            );
+          }
+
+          if (sourcesToSet) {
+            console.log(
+              "CLIENT: Setting messageSources with data from message.metadata.unstable_data."
+            );
+            setMessageSources((prevMap) => {
+              const newMap = new Map(prevMap);
+              newMap.set(message.id, sourcesToSet!);
+              console.log(
+                `CLIENT: Updated messageSources map for message ${message.id}. New map size: ${newMap.size}`
+              );
+              return newMap;
+            });
+          } else {
+            console.warn(
+              "CLIENT: No processable sources found in message.metadata.unstable_data. Citations may not work."
+            );
+            // Optionally, set empty sources for this message if none are found
+            setMessageSources((prevMap) => {
+              const newMap = new Map(prevMap);
+              if (!newMap.has(message.id)) {
+                // Avoid overwriting if already set by a previous logic path (though unlikely now)
+                newMap.set(message.id, []);
+                console.log(
+                  `CLIENT: Set empty sources for message ${message.id} as fallback.`
+                );
+              }
+              return newMap;
+            });
           }
         } catch (e) {
-          console.error("Error accessing StreamData:", e);
+          console.error(
+            "CLIENT: Error processing message object in onFinish:",
+            e
+          );
         }
       }
     },
@@ -377,17 +424,15 @@ const PerplexityUserMessage: FC = () => {
 const Citation: FC<{
   num: number;
   source?: DocumentChunk;
-  demoSource?: DocumentChunk; // Demo source for when actual source is unavailable
-}> = ({ num, source, demoSource }) => {
+}> = ({ num, source }) => {
   const [showTooltip, setShowTooltip] = useState(false);
 
-  // If we have a real source, use it; otherwise use demo source or a placeholder
-  const displaySource = source || demoSource;
+  const displaySource = source;
   const tooltipText = displaySource
     ? `${displaySource.name ? displaySource.name + ": " : ""}${
         displaySource.content
       }`
-    : "Source not found";
+    : "Source not available"; // Fallback text if source is undefined
 
   return (
     <span className="whitespace-nowrap relative inline-block">
@@ -417,7 +462,7 @@ const Citation: FC<{
             </div>
           )}
           <div className="break-words whitespace-normal overflow-y-auto max-h-40">
-            {displaySource?.content || "Source not found"}
+            {displaySource?.content || "Source details not available."}
           </div>
         </div>
       )}
@@ -446,14 +491,14 @@ const ContentWithCitations: FC<{ content: string; messageData: any }> = ({
             .map((numStr) => parseInt(numStr.trim(), 10));
           return citationNumbers.map((num, i) => {
             const source = sources[num - 1]; // 1-indexed to 0-indexed
-            const demoSource = DEMO_SOURCES[(num - 1) % DEMO_SOURCES.length]; // Cycle through demo sources
+            // const demoSource = DEMO_SOURCES[(num - 1) % DEMO_SOURCES.length]; // Cycle through demo sources
 
             return (
               <Citation
                 key={`${index}-${i}`}
                 num={num}
                 source={source}
-                demoSource={demoSource}
+                // demoSource={demoSource}
               />
             );
           });
