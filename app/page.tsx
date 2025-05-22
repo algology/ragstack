@@ -3,7 +3,7 @@
 import { useState, /*useRef,*/ useEffect } from "react"; // useRef might not be needed
 // import { useChat, type Message as VercelAIMessage } from "@ai-sdk/react"; // Replaced by useChatRuntime
 import React, { type FC } from "react";
-// import Image from "next/image"; // Removed unused import
+import Image from "next/image"; // Removed unused import
 // import Link from "next/link"; // Removed unused import
 // import { Settings, Info } from "lucide-react"; // Removed unused imports
 // import { ModeToggle } from "@/components/mode-toggle"; // Removed unused import
@@ -329,9 +329,13 @@ const ThreadWelcome: FC = () => {
     <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
       <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-12 px-4">
         <div className="flex w-full flex-grow flex-col items-center justify-center">
-          <p className="font-regular font-display text-4xl md:text-5xl text-center">
-            Ask me anything about wine
-          </p>
+          <Image
+            src="/logo2.png"
+            alt="Wine Logo"
+            width={200}
+            height={100}
+            style={{ filter: "brightness(0) invert(1) grayscale(0.3)" }}
+          />
         </div>
         <ComposerPrimitive.Root className="focus-within:ring-border/20 w-full rounded-lg border border-foreground/20 bg-[#202222] px-2 shadow-sm outline-none transition-all duration-200 focus-within:ring-1 focus:outline-none">
           <ComposerPrimitive.Input
@@ -355,6 +359,16 @@ const ThreadWelcome: FC = () => {
             </ComposerPrimitive.Send>
           </div>
         </ComposerPrimitive.Root>
+      </div>
+      <div className="absolute bottom-4 right-4 flex items-center">
+        <p className="text-sm text-gray-400 mr-2">by</p>
+        <Image
+          src="/image.png"
+          alt="11point2 Logo"
+          width={150}
+          height={40}
+          style={{ filter: "" }}
+        />
       </div>
     </div>
   );
