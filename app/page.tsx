@@ -452,19 +452,19 @@ const Citation: FC<{
 
       {/* Custom tooltip that's visible on hover */}
       {showTooltip && (
-        <div
-          className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden"
+        <span
+          className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden block"
           style={{ minWidth: "250px" }}
         >
           {displaySource?.name && (
-            <div className="font-semibold mb-1 text-blue-300 truncate">
+            <span className="font-semibold mb-1 text-blue-300 truncate block">
               {displaySource.name}
-            </div>
+            </span>
           )}
-          <div className="break-words whitespace-normal overflow-y-auto max-h-40">
+          <span className="break-words whitespace-normal overflow-y-auto max-h-40 block">
             {displaySource?.content || "Source details not available."}
-          </div>
-        </div>
+          </span>
+        </span>
       )}
     </span>
   );
