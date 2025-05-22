@@ -345,7 +345,7 @@ const ThreadWelcome: FC = () => {
             <div className="flex-grow" />
             <ComposerPrimitive.Send asChild>
               <TooltipIconButton
-                className="my-2.5 size-8 rounded-full p-2 transition-opacity bg-blue-600 hover:bg-blue-700 text-white"
+                className="my-2.5 size-8 rounded-full p-2 transition-opacity bg-[#8b2c2c] hover:bg-[#b54545] text-white"
                 tooltip="Send"
                 variant="default"
                 type="button"
@@ -388,7 +388,7 @@ const ComposerAction: FC = () => {
           <TooltipIconButton
             tooltip="Send"
             variant="default"
-            className="my-2.5 size-10 rounded-full p-2 transition-opacity ease-in bg-blue-600 hover:bg-blue-700 text-white"
+            className="my-2.5 size-10 rounded-full p-2 transition-opacity ease-in bg-[#8b2c2c] hover:bg-[#b54545] text-white"
             type="button"
           >
             <ArrowUpIcon className="!size-5" />
