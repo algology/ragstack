@@ -17,7 +17,6 @@ interface ChatAreaProps {
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   isLoading: boolean;
   error: Error | undefined;
-  selectedDocumentName: string | null;
   messagesContainerRef: React.RefObject<HTMLDivElement | null>;
   messageChunksMap: Record<string, SourceChunk[]>;
 }
@@ -29,21 +28,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   handleSubmit,
   isLoading,
   error,
-  selectedDocumentName,
   messagesContainerRef,
   messageChunksMap,
 }) => {
   return (
     <main className="flex-1 flex flex-col overflow-hidden">
-      {/* Context Header */}
-      <div className="p-2 px-4 border-b bg-muted/30 flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">
-          {selectedDocumentName
-            ? `Chatting with: ${selectedDocumentName}`
-            : "Chatting with: All Documents"}
-        </p>
-      </div>
-
       {/* Message list area */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
         <TooltipProvider delayDuration={100}>

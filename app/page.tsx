@@ -2,11 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useChat, type Message as AIMessage } from "@ai-sdk/react";
-import { supabase } from "@/lib/supabaseClient";
 import React from "react";
-import Sidebar from "@/components/sidebar";
+import { Button } from "@/components/ui/button";
 import ChatArea from "@/components/chat-area";
 import Image from "next/image";
+import Link from "next/link";
+import { Settings, Info } from "lucide-react";
+import { ModeToggle } from "@/components/mode-toggle";
 
 // MODIFIED: Temporarily re-define SourceChunk here. Ideally, import from a shared types file or chat-area.tsx if exported.
 interface SourceChunk {
@@ -14,27 +16,13 @@ interface SourceChunk {
   content: string;
 }
 
-interface UploadedDocument {
-  id: number;
-  name: string;
-}
-
 export default function Chat() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<string>("");
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const [uploadedDocuments, setUploadedDocuments] = useState<
-    UploadedDocument[]
-  >([]);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(
-    null
-  );
-  const [selectedDocumentName, setSelectedDocumentName] = useState<
-    string | null
-  >(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [currentChatContextName, setCurrentChatContextName] =
+    useState<string>("All Documents");
+  const [currentChatContextId, setCurrentChatContextId] = useState<
+    string | undefined
+  >(undefined);
   const [messageChunksMap, setMessageChunksMap] = useState<{
     [key: string]: SourceChunk[];
   }>({});
@@ -51,10 +39,11 @@ export default function Chat() {
   } = useChat({
     api: "/api/chat",
     body: {
-      documentId:
-        selectedDocumentId !== null ? String(selectedDocumentId) : undefined,
+      documentId: currentChatContextId,
       documentName:
-        selectedDocumentName !== null ? selectedDocumentName : undefined,
+        currentChatContextName === "All Documents"
+          ? undefined
+          : currentChatContextName,
     },
     onResponse: (response) => {
       console.log(
@@ -273,26 +262,41 @@ export default function Chat() {
     }
   }, [data, isLoading, messageChunksMap]);
 
+  // EFFECT TO READ FROM LOCALSTORAGE AND UPDATE CHAT CONTEXT
   useEffect(() => {
-    const fetchDocuments = async () => {
-      setFetchError(null);
-      console.log("Fetching documents...");
-      const { data, error } = await supabase
-        .from("documents")
-        .select("id, name")
-        .order("created_at", { ascending: false });
+    const updateChatContextFromStorage = () => {
+      const storedId = localStorage.getItem("chatContextId");
+      const storedName = localStorage.getItem("chatContextName");
 
-      if (error) {
-        console.error("Error fetching documents:", error);
-        setFetchError("Could not load document list.");
-      } else if (data) {
-        console.log("Fetched documents:", data);
-        setUploadedDocuments(data);
+      const newName = storedName || "All Documents";
+      setCurrentChatContextName(newName);
+
+      let docIdForApi: string | undefined = undefined;
+      if (storedId && storedId !== "null") {
+        docIdForApi = storedId;
+      }
+      setCurrentChatContextId(docIdForApi);
+
+      // The useChat hook will automatically re-evaluate with the new
+      // currentChatContextId and currentChatContextName due to them being in its `body` prop.
+    };
+
+    updateChatContextFromStorage();
+
+    // Listen for storage changes from other tabs/windows (optional but good practice)
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === "chatContextId" || event.key === "chatContextName") {
+        updateChatContextFromStorage();
       }
     };
-    fetchDocuments();
-  }, []);
+    window.addEventListener("storage", handleStorageChange);
 
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []); // Removed setBody dependency
+
+  // Scroll to bottom when new messages are added
   useEffect(() => {
     if (messagesContainerRef.current) {
       messagesContainerRef.current.scrollTop =
@@ -300,161 +304,51 @@ export default function Chat() {
     }
   }, [messages]);
 
-  const handleFileSelected = useCallback((file: File) => {
-    setSelectedFile(file);
-    setUploadStatus("");
-    console.log("File selected:", file.name);
-  }, []);
-
-  const extractTextFromFile = async (file: File): Promise<string> => {
-    if (file.type === "application/pdf") {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText =
-          textContent.items
-            ?.map((item) => ("str" in item ? item.str : ""))
-            .join(" \n") ?? "";
-        fullText += pageText + " \n";
-      }
-      return fullText;
-    } else if (file.type === "text/plain") {
-      return await file.text();
-    } else {
-      throw new Error("Unsupported file type passed to extraction.");
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      setUploadStatus("Please select a file first.");
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadStatus(`Processing ${selectedFile.name}...`);
-
-    let textContent = "";
-    const fileName = selectedFile.name;
-
-    try {
-      textContent = await extractTextFromFile(selectedFile);
-
-      if (!textContent.trim()) {
-        throw new Error("Could not extract text from file.");
-      }
-
-      setUploadStatus(`Uploading extracted text from ${fileName}...`);
-
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ fileName: fileName, textContent: textContent }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        setUploadStatus(
-          `Successfully uploaded and processed ${fileName}. Document ID: ${result.documentId}`
-        );
-        setUploadedDocuments((prevDocs) => [
-          { id: result.documentId, name: fileName },
-          ...prevDocs,
-        ]);
-        setSelectedFile(null);
-      } else {
-        setUploadStatus(`Upload failed: ${result.error || "Unknown error"}`);
-        console.error("Upload failed:", result);
-      }
-    } catch (error) {
-      console.error("Processing/Upload error:", error);
-      setUploadStatus(
-        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleDeleteDocument = async (docId: number, docName: string) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to delete "${docName}"? This action cannot be undone.`
-      )
-    ) {
-      return;
-    }
-
-    setUploadStatus(`Deleting ${docName}...`);
-    try {
-      const response = await fetch(`/api/documents/${docId}`, {
-        method: "DELETE",
-      });
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        setUploadStatus(`Successfully deleted ${docName}.`);
-        setUploadedDocuments((prevDocs) =>
-          prevDocs.filter((doc) => doc.id !== docId)
-        );
-        if (selectedDocumentId === docId) {
-          setSelectedDocumentId(null);
-          setSelectedDocumentName(null);
-        }
-      } else {
-        setUploadStatus(
-          `Failed to delete ${docName}: ${result.error || "Unknown error"}`
-        );
-        console.error("Delete failed:", result);
-      }
-    } catch (error) {
-      console.error("Delete document error:", error);
-      setUploadStatus(
-        `Error deleting ${docName}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
+  // Error display component
+  const ChatErrorDisplay = ({ error }: { error: Error | undefined }) => {
+    if (!error) return null;
+    return <div className="text-red-500 text-sm mt-2">{error.message}</div>;
   };
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground">
-      {/* Updated Header */}
-      <header className="p-4 border-b flex justify-between items-center">
-        {/* Wrapper div to center the logo */}
-        <div className="flex-grow flex justify-center">
-          <Image src="/logo.png" alt="Vinea Logo" width={110} height={50} />
+      <header className="p-4 border-b flex justify-between items-center dark:bg-gray-800 bg-slate-50">
+        <div className="flex items-center">
+          {/* Adjusted for responsive display: hidden on small, visible on larger */}
+          <div className="hidden sm:block">
+            <Image
+              src="/logo.png"
+              alt="Vinea Logo"
+              width={110}
+              height={50}
+              priority
+            />
+          </div>
+          {/* Display Current Chat Context */}
+          <div className="flex-1 flex justify-center items-center px-4">
+            <div className="flex items-center text-sm text-muted-foreground bg-muted px-3 py-1.5 rounded-lg">
+              <Info size={14} className="mr-2 text-blue-500" />
+              <span>
+                Chatting with:{" "}
+                <strong className="text-foreground">
+                  {currentChatContextName}
+                </strong>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Link href="/admin" passHref>
+            <Button variant="outline" className="flex items-center space-x-2">
+              <Settings size={18} />
+              <span className="hidden sm:inline">Admin</span>
+            </Button>
+          </Link>
+          <ModeToggle />
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar for Upload and Doc List */}
-        <Sidebar
-          isSidebarOpen={isSidebarOpen}
-          setIsSidebarOpen={setIsSidebarOpen}
-          uploadedDocuments={uploadedDocuments}
-          selectedDocumentId={selectedDocumentId}
-          setSelectedDocumentId={setSelectedDocumentId}
-          setSelectedDocumentName={setSelectedDocumentName}
-          handleFileSelected={handleFileSelected}
-          handleUpload={handleUpload}
-          handleDeleteDocument={handleDeleteDocument}
-          isUploading={isUploading}
-          uploadStatus={uploadStatus}
-          fetchError={fetchError}
-          isLoading={isLoading}
-          selectedFile={selectedFile}
-        />
-
-        {/* Main Chat Area */}
+      <div className="flex flex-1 overflow-hidden">
         <ChatArea
           messages={messages}
           input={input}
@@ -462,7 +356,6 @@ export default function Chat() {
           handleSubmit={handleSubmit}
           isLoading={isLoading}
           error={error}
-          selectedDocumentName={selectedDocumentName}
           messagesContainerRef={messagesContainerRef}
           messageChunksMap={messageChunksMap}
         />
