@@ -1,365 +1,597 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useChat, type Message as AIMessage } from "@ai-sdk/react";
-import React from "react";
-import { Button } from "@/components/ui/button";
-import ChatArea from "@/components/chat-area";
+import { useState, /*useRef,*/ useEffect } from "react"; // useRef might not be needed
+// import { useChat, type Message as VercelAIMessage } from "@ai-sdk/react"; // Replaced by useChatRuntime
+import React, { type FC } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Settings, Info } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
+import { cn } from "@/lib/utils";
 
-// MODIFIED: Temporarily re-define SourceChunk here. Ideally, import from a shared types file or chat-area.tsx if exported.
-interface SourceChunk {
-  id: string | number;
+// Assistant UI Components
+import {
+  AssistantRuntimeProvider, // NEW
+  ActionBarPrimitive,
+  BranchPickerPrimitive,
+  ComposerPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useMessage, // IMPORT useMessage
+  type ThreadMessage, // IMPORT ThreadMessage
+  // useAssistantRuntime, // No longer needed directly for bridging
+} from "@assistant-ui/react";
+import { useChatRuntime } from "@assistant-ui/react-ai-sdk"; // NEW
+import type { Message as VercelAIMessage } from "ai"; // For typing if needed, though runtime handles types
+
+import {
+  ArrowDownIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  // PaperclipIcon, // Commented out due to attachment UI being commented
+  RefreshCwIcon,
+  SparkleIcon,
+} from "lucide-react";
+
+import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+// import { // Attachment components still commented out
+//   ComposerAttachments,
+//   UserMessageAttachments,
+// } from "@/components/assistant-ui/attachment";
+
+// Define DocumentChunk interface based on what's expected from the backend
+interface DocumentChunk {
+  id?: string; // Or number, depending on your DB schema for chunks
   content: string;
+  name?: string; // Document name, if available per chunk
+  // Add any other relevant properties that your backend sends for each chunk
 }
 
-export default function Chat() {
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+// For demonstration - sample sources to display in tooltips when actual sources aren't available
+const DEMO_SOURCES: DocumentChunk[] = [
+  {
+    id: "1",
+    content:
+      "Wine is an alcoholic drink made from fermented grapes. Yeast consumes the sugar in the grapes and converts it to ethanol and carbon dioxide, releasing heat in the process.",
+    name: "Wine_Overview.pdf",
+  },
+  {
+    id: "2",
+    content:
+      "The earliest evidence of a wine production facility is the Areni-1 winery in Armenia and is at least 6,100 years old.",
+    name: "Wine_History.txt",
+  },
+  {
+    id: "3",
+    content:
+      "Wine grapes grow almost exclusively between 30 and 50 degrees latitude north and south of the equator.",
+    name: "Wine_Geography.pdf",
+  },
+  {
+    id: "4",
+    content:
+      "Wines made from fruits other than grapes include rice wine, pomegranate wine, apple wine and elderberry wine.",
+    name: "Wine_Varieties.txt",
+  },
+  {
+    id: "5",
+    content:
+      "Wine has been produced for thousands of years, with evidence of ancient wine production in Georgia from 8000 BC, Iran from 7000 BC, and Sicily from 4000 BC.",
+    name: "Wine_History.txt",
+  },
+];
+
+// Message sources map type
+type MessageSourcesMap = Map<string, DocumentChunk[]>;
+
+// Remove ChatErrorDisplay as it is unused
+// const ChatErrorDisplay: FC<{ error: Error | undefined }> = ({ error }) => {
+//   if (!error) return null;
+//   return (
+//     <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+//       <strong className="font-bold">Error:</strong>
+//       <span className="block sm:inline"> {error.message}</span>
+//     </div>
+//   );
+// };
+
+export default function ChatPage() {
   const [currentChatContextName, setCurrentChatContextName] =
     useState<string>("All Documents");
   const [currentChatContextId, setCurrentChatContextId] = useState<
     string | undefined
   >(undefined);
-  const [messageChunksMap, setMessageChunksMap] = useState<{
-    [key: string]: SourceChunk[];
-  }>({});
-  const accumulatedChunksForCurrentStreamRef = useRef<SourceChunk[]>([]);
 
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-    error,
-    data,
-  } = useChat({
+  // Add state to store citation sources per message
+  const [messageSources, setMessageSources] = useState<MessageSourcesMap>(
+    new Map()
+  );
+
+  const runtime = useChatRuntime({
     api: "/api/chat",
+    initialMessages: [], // Start with empty, or load from history if implemented
     body: {
-      documentId: currentChatContextId,
+      documentId: currentChatContextId, // This will be the initial value
       documentName:
         currentChatContextName === "All Documents"
           ? undefined
           : currentChatContextName,
     },
-    onResponse: (response) => {
-      console.log(
-        "%cuseChat - onResponse%c received for a NEW stream. Response OK: %s",
-        "color: blue; font-weight: bold;",
-        "color: blue;",
-        response.ok
-      );
-      if (!response.ok) {
-        console.error("useChat - onResponse Error:", response.statusText);
-      }
-      console.log(
-        "%cuseChat - onResponse%c: Resetting accumulatedChunksForCurrentStreamRef. Current length: %d",
-        "color: blue; font-weight: bold;",
-        "color: blue;",
-        accumulatedChunksForCurrentStreamRef.current.length
-      );
-      accumulatedChunksForCurrentStreamRef.current = [];
-    },
-    onFinish: (message: AIMessage) => {
-      console.log(
-        `%cuseChat - onFinish%c for message ID: ${message.id}, Role: ${message.role}`,
-        "color: green; font-weight: bold;",
-        "color: green;"
-      );
+    onFinish: (message: ThreadMessage) => {
+      if (message.role === "assistant") {
+        console.log("Assistant message finished. Message ID:", message.id);
 
-      let chunksForMessage: SourceChunk[] | undefined = undefined;
+        // Attempt to access the StreamData
+        // The underlying runtime object might have internal properties that have the raw data
+        try {
+          // The internal structure of the runtime object is not fully documented,
+          // but it likely has a _raw, _data, or similar internal field that contains the raw StreamData
+          // This is a hack to access it, and might be fragile if the library structure changes
+          const runtimeObj = runtime as any;
 
-      // Priority: Use the chunks accumulated specifically for this stream.
-      if (accumulatedChunksForCurrentStreamRef.current.length > 0) {
-        chunksForMessage = accumulatedChunksForCurrentStreamRef.current;
-        console.log(
-          `%cuseChat - onFinish%c: Chunks for message ID ${message.id} will be taken from accumulatedChunksForCurrentStreamRef (length ${chunksForMessage.length}):`,
-          "color: green; font-weight: bold;",
-          "color: green;",
-          JSON.stringify(
-            chunksForMessage.map((c) => ({
-              id: c.id,
-              content: c.content.substring(0, 30) + "...",
-            })),
-            null,
-            2
-          )
-        );
-      }
-      // Fallback 1: message.data (if SDK ever populates it correctly with isolated data)
-      else if (
-        message.data &&
-        Array.isArray(message.data) &&
-        message.data.length > 0
-      ) {
-        chunksForMessage = message.data as unknown as SourceChunk[];
-        console.log(
-          `%cuseChat - onFinish%c: WARNING - accumulatedChunksForCurrentStreamRef was empty. Falling back to message.data for ID ${message.id}:`,
-          "color: orange; font-weight: bold;",
-          "color: orange;",
-          JSON.stringify(
-            chunksForMessage.map((c) => ({
-              id: c.id,
-              content: c.content.substring(0, 30) + "...",
-            })),
-            null,
-            2
-          )
-        );
-      }
-      // Fallback 2: top-level data (highly unlikely to be correct and isolated)
-      else if (data && Array.isArray(data) && data.length > 0) {
-        chunksForMessage = data as unknown as SourceChunk[]; // Potentially cumulative/stale
-        console.log(
-          `%cuseChat - onFinish%c: CRITICAL WARNING - accumulatedChunksForCurrentStreamRef AND message.data were empty. Falling back to top-level 'data' for ID ${message.id}:`,
-          "color: red; font-weight: bold;",
-          "color: red;",
-          JSON.stringify(
-            chunksForMessage.map((c) => ({
-              id: c.id,
-              content: c.content.substring(0, 30) + "...",
-            })),
-            null,
-            2
-          )
-        );
-      }
+          // Try various possible internal field names to find the StreamData
+          const possibleDataFields = [
+            "data",
+            "_data",
+            "streamData",
+            "_streamData",
+          ];
 
-      if (
-        message.role === "assistant" &&
-        chunksForMessage &&
-        chunksForMessage.length > 0
-      ) {
-        console.log(
-          `%cuseChat - onFinish%c: Storing ${chunksForMessage.length} chunks for assistant message ID ${message.id}.`,
-          "color: green; font-weight: bold;",
-          "color: green;"
-        );
-        setMessageChunksMap((prevMap) => {
-          const newMap = {
-            ...prevMap,
-            [message.id]: chunksForMessage!,
-          };
-          console.log(
-            `%cuseChat - onFinish%c: Updated messageChunksMap for ID ${message.id}. New map keys: %s`,
-            "color: green; font-weight: bold;",
-            "color: green;",
-            Object.keys(newMap).join(", ")
-          );
-          return newMap;
-        });
-      } else if (message.role === "assistant") {
-        console.log(
-          `%cuseChat - onFinish%c: No suitable chunk data found to store for assistant message ID ${message.id}.`,
-          "color: yellow; font-weight: bold;",
-          "color: yellow;"
-        );
+          for (const field of possibleDataFields) {
+            if (runtimeObj[field] && runtimeObj[field].length > 0) {
+              console.log(
+                `Found StreamData in runtime.${field}:`,
+                runtimeObj[field]
+              );
+
+              // The first item should be our array of DocumentChunk
+              const sources = runtimeObj[field][0] as DocumentChunk[];
+              if (
+                Array.isArray(sources) &&
+                sources.length > 0 &&
+                "content" in sources[0]
+              ) {
+                // Store in our messageSources Map
+                setMessageSources((prevMap) => {
+                  const newMap = new Map(prevMap);
+                  newMap.set(message.id, sources);
+                  return newMap;
+                });
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Error accessing StreamData:", e);
+        }
       }
-      // Reset ref after processing, regardless of outcome for this message.
-      // onResponse should handle this for new streams, but this is an extra safeguard.
-      console.log(
-        "%cuseChat - onFinish%c: Resetting accumulatedChunksForCurrentStreamRef post-processing. Length before reset: %d",
-        "color: green; font-weight: bold;",
-        "color: green;",
-        accumulatedChunksForCurrentStreamRef.current.length
-      );
-      accumulatedChunksForCurrentStreamRef.current = [];
     },
-    onError: (error) => {
-      console.error("useChat - onError triggered:", error);
-    },
+    // onError can be defined here if needed for logging/side-effects
   });
 
-  // useEffect to capture streaming data into accumulatedChunksForCurrentStreamRef
-  useEffect(() => {
-    if (isLoading && data && Array.isArray(data)) {
-      console.log(
-        "%cuseEffect[data, isLoading]%c: Stream active. Received 'data' prop. Raw data length: %d",
-        "color: magenta; font-weight: bold;",
-        "color: magenta;",
-        data.length
-      );
-
-      let allChunksFromDataPacket: SourceChunk[] = [];
-      // Attempt to parse chunks from the data packet
-      if (data.length === 1 && Array.isArray(data[0])) {
-        allChunksFromDataPacket = data[0] as unknown as SourceChunk[];
-      } else if (
-        data.length > 0 &&
-        typeof data[0] === "object" &&
-        data[0] !== null &&
-        "content" in data[0]
-      ) {
-        allChunksFromDataPacket = data as unknown as SourceChunk[];
-      }
-
-      if (allChunksFromDataPacket.length > 0) {
-        const finalizedChunkIds = new Set<string | number>();
-        Object.values(messageChunksMap).forEach((chunkList) =>
-          chunkList.forEach((c) => finalizedChunkIds.add(c.id))
-        );
-
-        const newChunksForThisStreamUpdate: SourceChunk[] = [];
-        const seenInThisPacket = new Set<string | number>(); // To ensure uniqueness within this packet's processing
-
-        for (const chunk of allChunksFromDataPacket) {
-          if (
-            chunk &&
-            typeof chunk.id !== "undefined" &&
-            !finalizedChunkIds.has(chunk.id) &&
-            !seenInThisPacket.has(chunk.id)
-          ) {
-            newChunksForThisStreamUpdate.push(chunk);
-            seenInThisPacket.add(chunk.id);
-          }
-        }
-
-        if (newChunksForThisStreamUpdate.length > 0) {
-          console.log(
-            "%cuseEffect[data, isLoading]%c: Found %d truly new (unfinalized and unique in this packet) chunks. Assigning to accumulatedChunksForCurrentStreamRef. First new chunk ID: %s",
-            "color: magenta; font-weight: bold;",
-            "color: magenta;",
-            newChunksForThisStreamUpdate.length,
-            newChunksForThisStreamUpdate[0]?.id
-          );
-          // Since onResponse clears the ref, and this effect filters for the current stream,
-          // we can directly assign. If the backend sends chunks for the current stream in multiple 'data' updates,
-          // this assignment will overwrite. For that, we might need to append if IDs are truly unique per stream segment.
-          // However, if backend sends full list of *new* chunks for current stream each time, this is fine.
-          // Given the Vercel SDK's `data` behavior (often the full array of all data parts sent *so far*),
-          // our filtering for `!finalizedChunkIds.has(chunk.id)` is key.
-          // accumulatedChunksForCurrentStreamRef.current should always be the *set of new chunks for the current message stream*.
-          accumulatedChunksForCurrentStreamRef.current =
-            newChunksForThisStreamUpdate;
-        } else {
-          console.log(
-            "%cuseEffect[data, isLoading]%c: No *new* unfinalized chunks found in this 'data' packet to update accumulatedChunksForCurrentStreamRef.",
-            "color: magenta; font-weight: bold;",
-            "color: magenta;"
-          );
-          // If no new chunks found in *this data packet*, we should not clear the ref here if it already has
-          // valid chunks from a *previous data packet of the same stream*.
-          // The ref is only cleared by onResponse (start of new stream) or onFinish (end of current stream).
-        }
-      } else {
-        console.log(
-          "%cuseEffect[data, isLoading]%c: No processable chunks found in 'data' prop this time (allChunksFromDataPacket was empty).",
-          "color: magenta; font-weight: bold;",
-          "color: magenta;"
-        );
-      }
-    } else if (!isLoading) {
-      // When loading stops, onFinish should handle and clear the ref.
-      // console.log(
-      //   "%cuseEffect[data, isLoading]%c: Stream stopped. accumulatedChunksForCurrentStreamRef should be handled by onFinish. Current ref (length %d):",
-      //   "color: magenta; font-weight: bold;", "color: magenta;", accumulatedChunksForCurrentStreamRef.current.length,
-      //   JSON.stringify(accumulatedChunksForCurrentStreamRef.current.map(c=>c.id))
-      // );
-      // No need to clear here, onFinish handles it. Potentially onResponse already cleared it if a new stream started immediately.
-    }
-  }, [data, isLoading, messageChunksMap]);
-
   // EFFECT TO READ FROM LOCALSTORAGE AND UPDATE CHAT CONTEXT
+  // This effect will now also need to re-initialize or update the runtime if context changes.
+  // Ideally, useChatRuntime would provide a way to update its body reactively.
+  // For now, we rely on the initial body config. If useChatRuntime internally uses useState for body,
+  // it won't pick up changes to currentChatContextId/Name after initialization this way.
+  // Let's assume for now the initial setup is what we have, and reactive body updates are a future enhancement
+  // or handled differently by the library (e.g. if runtime.setBody() existed).
   useEffect(() => {
     const updateChatContextFromStorage = () => {
       const storedId = localStorage.getItem("chatContextId");
       const storedName = localStorage.getItem("chatContextName");
-
       const newName = storedName || "All Documents";
+      const newId = storedId && storedId !== "null" ? storedId : undefined;
+
       setCurrentChatContextName(newName);
+      setCurrentChatContextId(newId);
 
-      let docIdForApi: string | undefined = undefined;
-      if (storedId && storedId !== "null") {
-        docIdForApi = storedId;
-      }
-      setCurrentChatContextId(docIdForApi);
-
-      // The useChat hook will automatically re-evaluate with the new
-      // currentChatContextId and currentChatContextName due to them being in its `body` prop.
+      // IMPORTANT: To make useChatRuntime reactive to body changes,
+      // you might need to pass these as props to a child component that then calls useChatRuntime,
+      // or use a key on AssistantRuntimeProvider to force re-initialization.
+      // The current setup will only use the initial values of currentChatContextId/Name.
+      // For this iteration, we'll update the state, but the runtime might not reflect it immediately
+      // without a mechanism to inform it or re-create it.
+      // A common pattern if the hook doesn't support dynamic body updates is to update a `key` prop on the Provider.
+      // runtime.updateChatBody({ documentId: newId, documentName: newName === "All Documents" ? undefined : newName }); // If such a method existed
     };
-
     updateChatContextFromStorage();
-
-    // Listen for storage changes from other tabs/windows (optional but good practice)
     const handleStorageChange = (event: StorageEvent) => {
       if (event.key === "chatContextId" || event.key === "chatContextName") {
         updateChatContextFromStorage();
       }
     };
     window.addEventListener("storage", handleStorageChange);
-
     return () => {
       window.removeEventListener("storage", handleStorageChange);
     };
-  }, []); // Removed setBody dependency
-
-  // Scroll to bottom when new messages are added
-  useEffect(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop =
-        messagesContainerRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  // Error display component
-  const ChatErrorDisplay = ({ error }: { error: Error | undefined }) => {
-    if (!error) return null;
-    return <div className="text-red-500 text-sm mt-2">{error.message}</div>;
-  };
+  }, []); // Empty dependency array means this runs once, subsequent changes to localStorage will update state but may not update runtime body
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
-      <header className="p-4 border-b flex justify-between items-center dark:bg-gray-800 bg-slate-50">
-        <div className="flex items-center">
-          {/* Adjusted for responsive display: hidden on small, visible on larger */}
-          <div className="hidden sm:block">
-            <Image
-              src="/logo.png"
-              alt="Vinea Logo"
-              width={110}
-              height={50}
-              priority
-            />
-          </div>
-          {/* Display Current Chat Context */}
-          <div className="flex-1 flex justify-center items-center px-4">
-            <div className="flex items-center text-sm text-muted-foreground bg-muted px-3 py-1.5 rounded-lg">
-              <Info size={14} className="mr-2 text-blue-500" />
-              <span>
-                Chatting with:{" "}
-                <strong className="text-foreground">
-                  {currentChatContextName}
-                </strong>
-              </span>
-            </div>
-          </div>
+    <AssistantRuntimeProvider runtime={runtime}>
+      {/* Pass messageSources as a prop to make it available throughout the component tree */}
+      <ChatPageContext.Provider value={{ messageSources }}>
+        <div className="flex flex-col h-screen bg-background text-foreground">
+          <ThreadPrimitive.Root
+            className="box-border flex-1 bg-[#191a1a] overflow-hidden"
+            style={{ ["--thread-max-width" as string]: "42rem" }}
+          >
+            <ThreadPrimitive.Empty>
+              <ThreadWelcome />
+            </ThreadPrimitive.Empty>
+            <ThreadPrimitive.If empty={false}>
+              <ThreadPrimitive.Viewport className="flex h-full flex-col items-center overflow-y-scroll scroll-smooth bg-inherit px-4 pt-8">
+                <ThreadPrimitive.Messages
+                  components={{
+                    UserMessage: PerplexityUserMessage,
+                    AssistantMessage: PerplexityAssistantMessage,
+                  }}
+                />
+                <div className="min-h-8 flex-grow" />
+                <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
+                  <ThreadScrollToBottom />
+                  <Composer />
+                </div>
+              </ThreadPrimitive.Viewport>
+            </ThreadPrimitive.If>
+          </ThreadPrimitive.Root>
         </div>
-        <div className="flex items-center space-x-2">
-          <Link href="/admin" passHref>
-            <Button variant="outline" className="flex items-center space-x-2">
-              <Settings size={18} />
-              <span className="hidden sm:inline">Admin</span>
-            </Button>
-          </Link>
-          <ModeToggle />
-        </div>
-      </header>
+      </ChatPageContext.Provider>
+    </AssistantRuntimeProvider>
+  );
+}
 
-      <div className="flex flex-1 overflow-hidden">
-        <ChatArea
-          messages={messages}
-          input={input}
-          handleInputChange={handleInputChange}
-          handleSubmit={handleSubmit}
-          isLoading={isLoading}
-          error={error}
-          messagesContainerRef={messagesContainerRef}
-          messageChunksMap={messageChunksMap}
-        />
+// Create a context to pass the messageSources Map down to child components
+interface ChatPageContextType {
+  messageSources: MessageSourcesMap;
+}
+
+const ChatPageContext = React.createContext<ChatPageContextType>({
+  messageSources: new Map(),
+});
+
+// Hook to access the ChatPageContext
+function useChatPageContext() {
+  return React.useContext(ChatPageContext);
+}
+
+// --- Perplexity Style Components ---
+
+const ThreadScrollToBottom: FC = () => {
+  return (
+    <ThreadPrimitive.ScrollToBottom asChild>
+      <TooltipIconButton
+        tooltip="Scroll to bottom"
+        variant="outline"
+        className="absolute -top-8 rounded-full disabled:invisible bg-[#202222] border-foreground/20 hover:bg-foreground/20"
+      >
+        <ArrowDownIcon />
+      </TooltipIconButton>
+    </ThreadPrimitive.ScrollToBottom>
+  );
+};
+
+// ThreadWelcome now accepts no runtime props, uses context for ComposerPrimitives
+const ThreadWelcome: FC = () => {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
+      <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-12 px-4">
+        <div className="flex w-full flex-grow flex-col items-center justify-center">
+          <p className="font-regular font-display text-4xl md:text-5xl text-center">
+            Ask me anything about wine
+          </p>
+        </div>
+        <ComposerPrimitive.Root className="focus-within:ring-border/20 w-full rounded-lg border border-foreground/20 bg-[#202222] px-2 shadow-sm outline-none transition-all duration-200 focus-within:ring-1 focus:outline-none">
+          <ComposerPrimitive.Input
+            rows={1}
+            autoFocus
+            placeholder="Ask anything..."
+            className="placeholder:text-muted-foreground max-h-40 w-full flex-grow resize-none border-none bg-transparent px-2 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
+            submitOnEnter
+          />
+          <div className="mx-1.5 flex gap-2">
+            <div className="flex-grow" />
+            <ComposerPrimitive.Send asChild>
+              <TooltipIconButton
+                className="my-2.5 size-8 rounded-full p-2 transition-opacity bg-blue-600 hover:bg-blue-700 text-white"
+                tooltip="Send"
+                variant="default"
+                type="button"
+              >
+                <ArrowRightIcon />
+              </TooltipIconButton>
+            </ComposerPrimitive.Send>
+          </div>
+        </ComposerPrimitive.Root>
       </div>
     </div>
   );
-}
+};
+
+// Composer now accepts no runtime props, uses context for ComposerPrimitives
+const Composer: FC = () => {
+  return (
+    <div className="bg-foreground/5 w-full rounded-full p-2">
+      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-[#202222] px-2.5 shadow-sm transition-colors ease-in">
+        <ComposerPrimitive.Input
+          rows={1}
+          autoFocus
+          placeholder="Ask follow-up"
+          className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
+          submitOnEnter
+        />
+        <div className="flex gap-3">
+          <ComposerAction />
+        </div>
+      </ComposerPrimitive.Root>
+    </div>
+  );
+};
+
+const ComposerAction: FC = () => {
+  return (
+    <>
+      <ThreadPrimitive.If running={false}>
+        <ComposerPrimitive.Send asChild>
+          <TooltipIconButton
+            tooltip="Send"
+            variant="default"
+            className="my-2.5 size-10 rounded-full p-2 transition-opacity ease-in bg-blue-600 hover:bg-blue-700 text-white"
+            type="button"
+          >
+            <ArrowUpIcon className="!size-5" />
+          </TooltipIconButton>
+        </ComposerPrimitive.Send>
+      </ThreadPrimitive.If>
+      <ThreadPrimitive.If running>
+        <ComposerPrimitive.Cancel asChild>
+          <TooltipIconButton
+            tooltip="Cancel"
+            variant="default"
+            className="my-2.5 size-10 rounded-full p-2 transition-opacity ease-in bg-red-600 hover:bg-red-700 text-white"
+          >
+            <CircleStopIcon />
+          </TooltipIconButton>
+        </ComposerPrimitive.Cancel>
+      </ThreadPrimitive.If>
+    </>
+  );
+};
+
+const PerplexityUserMessage: FC = () => {
+  return (
+    <MessagePrimitive.Root className="relative w-full max-w-[var(--thread-max-width)] gap-y-2 py-4 text-white">
+      <div className="text-foreground break-words rounded-3xl py-2.5 text-xl md:text-2xl">
+        <MessagePrimitive.Content />
+      </div>
+    </MessagePrimitive.Root>
+  );
+};
+
+// Custom Citation component with visible tooltip
+const Citation: FC<{
+  num: number;
+  source?: DocumentChunk;
+  demoSource?: DocumentChunk; // Demo source for when actual source is unavailable
+}> = ({ num, source, demoSource }) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  // If we have a real source, use it; otherwise use demo source or a placeholder
+  const displaySource = source || demoSource;
+  const tooltipText = displaySource
+    ? `${displaySource.name ? displaySource.name + ": " : ""}${
+        displaySource.content
+      }`
+    : "Source not found";
+
+  return (
+    <span className="whitespace-nowrap relative inline-block">
+      <a
+        className="mr-[2px] citation ml-xs inline cursor-pointer"
+        data-state={showTooltip ? "open" : "closed"}
+        aria-label={tooltipText}
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
+      >
+        <span className="relative select-none align-middle -top-px font-sans text-base text-textMain dark:text-textMainDark selection:bg-super/50 selection:text-textMain dark:selection:bg-superDuper/10 dark:selection:text-superDark">
+          <span className="hover:bg-super dark:hover:bg-superDark dark:hover:text-backgroundDark min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums hover:text-white py-[0.1875rem] px-[0.3rem] border border-borderMain/50 dark:border-borderMainDark/50 bg-offsetPlus dark:bg-offsetPlusDark">
+            {num}
+          </span>
+        </span>
+      </a>
+
+      {/* Custom tooltip that's visible on hover */}
+      {showTooltip && (
+        <div
+          className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden"
+          style={{ minWidth: "250px" }}
+        >
+          {displaySource?.name && (
+            <div className="font-semibold mb-1 text-blue-300 truncate">
+              {displaySource.name}
+            </div>
+          )}
+          <div className="break-words whitespace-normal overflow-y-auto max-h-40">
+            {displaySource?.content || "Source not found"}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+};
+
+const ContentWithCitations: FC<{ content: string; messageData: any }> = ({
+  content,
+  messageData,
+}) => {
+  // Expect messageData to be the array of sources (DocumentChunk[]) directly
+  const sources = (messageData as DocumentChunk[] | undefined) ?? [];
+
+  if (!content) return null;
+
+  const parts = content.split(/(\[\d+(?:,\s*\d+)*\])/g);
+
+  return (
+    <>
+      {parts.map((part, index) => {
+        const citationMatch = part.match(/\[(\d+(?:,\s*\d+)*)\]/);
+        if (citationMatch) {
+          const citationNumbers = citationMatch[1]
+            .split(",")
+            .map((numStr) => parseInt(numStr.trim(), 10));
+          return citationNumbers.map((num, i) => {
+            const source = sources[num - 1]; // 1-indexed to 0-indexed
+            const demoSource = DEMO_SOURCES[(num - 1) % DEMO_SOURCES.length]; // Cycle through demo sources
+
+            return (
+              <Citation
+                key={`${index}-${i}`}
+                num={num}
+                source={source}
+                demoSource={demoSource}
+              />
+            );
+          });
+        }
+        // Use simple span for non-citation parts
+        return (
+          <span key={index} className="text-white">
+            {part}
+          </span>
+        );
+      })}
+    </>
+  );
+};
+
+const PerplexityAssistantMessage: FC = () => {
+  const message = useMessage();
+  // Access the messageSources from context
+  const { messageSources } = useChatPageContext();
+
+  // Extract text content from the message content parts array
+  let messageText = "";
+  if (message.content) {
+    // Find the first part with type 'text' and use its text content
+    const textPart =
+      Array.isArray(message.content) &&
+      message.content.find((part) => part.type === "text" && "text" in part);
+
+    if (textPart && "text" in textPart) {
+      messageText = textPart.text as string;
+    }
+  }
+
+  // Get citation sources for this message
+  const sources = messageSources.get(message.id) || [];
+
+  return (
+    <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
+      <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
+        <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
+
+        {messageText && (
+          <ContentWithCitations
+            content={messageText}
+            messageData={sources} // Pass actual sources from our Map
+          />
+        )}
+        {/* Fallback or if content is not string, MessagePrimitive.Content might handle it */}
+        {!messageText && (
+          <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+        )}
+      </div>
+      <AssistantActionBar />
+      <BranchPicker className="col-start-1 col-span-2 row-start-2 -ml-2 mr-2 mt-2" />
+    </MessagePrimitive.Root>
+  );
+};
+
+const AssistantActionBar: FC = () => {
+  return (
+    <ActionBarPrimitive.Root
+      hideWhenRunning
+      autohide="not-last"
+      autohideFloat="single-branch"
+      className="text-muted-foreground col-start-1 col-span-2 row-start-2 mt-2 flex gap-1"
+    >
+      <ActionBarPrimitive.Copy asChild>
+        <TooltipIconButton
+          tooltip="Copy"
+          className="text-gray-400 hover:text-white"
+        >
+          <MessagePrimitive.If copied>
+            <CheckIcon />
+          </MessagePrimitive.If>
+          <MessagePrimitive.If copied={false}>
+            <CopyIcon />
+          </MessagePrimitive.If>
+        </TooltipIconButton>
+      </ActionBarPrimitive.Copy>
+      <ThreadPrimitive.If running={false}>
+        <ActionBarPrimitive.Reload asChild>
+          <TooltipIconButton
+            tooltip="Refresh"
+            className="text-gray-400 hover:text-white"
+          >
+            <RefreshCwIcon />
+          </TooltipIconButton>
+        </ActionBarPrimitive.Reload>
+      </ThreadPrimitive.If>
+    </ActionBarPrimitive.Root>
+  );
+};
+
+const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
+  className,
+  ...rest
+}) => {
+  return (
+    <BranchPickerPrimitive.Root
+      hideWhenSingleBranch
+      className={cn(
+        "text-muted-foreground inline-flex items-center text-xs",
+        className
+      )}
+      {...rest}
+    >
+      <BranchPickerPrimitive.Previous asChild>
+        <TooltipIconButton
+          tooltip="Previous"
+          className="text-gray-400 hover:text-white"
+        >
+          <ChevronLeftIcon />
+        </TooltipIconButton>
+      </BranchPickerPrimitive.Previous>
+      <span className="font-medium text-gray-300 px-1">
+        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
+      </span>
+      <BranchPickerPrimitive.Next asChild>
+        <TooltipIconButton
+          tooltip="Next"
+          className="text-gray-400 hover:text-white"
+        >
+          <ChevronRightIcon />
+        </TooltipIconButton>
+      </BranchPickerPrimitive.Next>
+    </BranchPickerPrimitive.Root>
+  );
+};
+
+const CircleStopIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 16 16"
+    fill="currentColor"
+    width="16"
+    height="16"
+    className="!size-4"
+  >
+    <rect width="10" height="10" x="3" y="3" rx="2" />
+  </svg>
+);

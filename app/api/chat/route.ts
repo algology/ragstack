@@ -78,19 +78,41 @@ export async function POST(req: NextRequest) {
       messagesLength: messages.length,
     }); // 2. Log parsed body
 
-    const lastUserMessage = messages[messages.length - 1]?.content;
-    if (!lastUserMessage) {
-      console.error("API_CHAT: No user message found");
-      return new Response(JSON.stringify({ error: "No user message found" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+    const lastUserMessage = messages[messages.length - 1];
+    let userMessageText = "";
+
+    if (lastUserMessage && typeof lastUserMessage.content === "string") {
+      userMessageText = lastUserMessage.content;
+    } else if (lastUserMessage && Array.isArray(lastUserMessage.content)) {
+      // Try to find the text part in the array
+      const textPart = lastUserMessage.content.find(
+        (part: any) => part.type === "text" && typeof part.text === "string"
+      ) as { type: "text"; text: string } | undefined;
+      if (textPart) {
+        userMessageText = textPart.text;
+      }
     }
-    console.log("API_CHAT: Last user message:", lastUserMessage); // 3. Log user message
+
+    if (!userMessageText) {
+      console.error(
+        "API_CHAT: No user message text found or content is not a string/expected structure"
+      );
+      return new Response(
+        JSON.stringify({ error: "No user message text found" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+    console.log(
+      "API_CHAT: Last user message text for embedding:",
+      userMessageText
+    ); // 3. Log user message text
 
     const embeddingResponse = await openaiEmbeddings.embeddings.create({
       model: OPENAI_EMBEDDING_MODEL,
-      input: lastUserMessage,
+      input: userMessageText, // Use the extracted string
     });
     const queryEmbedding = embeddingResponse.data[0].embedding;
     console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
@@ -140,7 +162,8 @@ export async function POST(req: NextRequest) {
       chunks && chunks.length > 0
         ? chunks
             .map(
-              (chunk: DocumentChunk, index: number) => `[${index + 1}] ${chunk.content}`
+              (chunk: DocumentChunk, index: number) =>
+                `[${index + 1}] ${chunk.content}`
             )
             .join("\n\n---\n\n")
         : "No relevant context found.";
@@ -166,10 +189,41 @@ export async function POST(req: NextRequest) {
           (msg): msg is Message & { role: "user" | "assistant" } =>
             msg.role === "user" || msg.role === "assistant"
         )
-        .map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        })),
+        .map((msg) => {
+          let contentString = "";
+          if (typeof msg.content === "string") {
+            contentString = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            // Explicitly cast to an array of known possible part types if necessary,
+            // or ensure Message type is specific enough.
+            // For now, casting to `any[]` then checking structure, which is not ideal but might bypass TS strictness here.
+            const contentArray = msg.content as any[];
+            for (const part of contentArray) {
+              if (
+                part &&
+                part.type === "text" &&
+                typeof part.text === "string"
+              ) {
+                contentString = part.text;
+                break; // Found the first text part
+              }
+            }
+            if (!contentString) {
+              console.warn(
+                `API_CHAT: Assistant message content for Groq is an array but no text part found. msg.id: ${msg.id}`
+              );
+            }
+          } else if (msg.content === null) {
+            console.warn(
+              `API_CHAT: Assistant message content for Groq is null. msg.id: ${msg.id}`
+            );
+          }
+
+          return {
+            role: msg.role as "user" | "assistant",
+            content: contentString,
+          };
+        }),
     ];
     console.log("API_CHAT: Prepared messages for Groq"); // 9. Log Groq messages prep
 
