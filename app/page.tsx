@@ -8,6 +8,8 @@ import Image from "next/image"; // Removed unused import
 // import { Settings, Info } from "lucide-react"; // Removed unused imports
 // import { ModeToggle } from "@/components/mode-toggle"; // Removed unused import
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // Assistant UI Components
 import {
@@ -468,59 +470,211 @@ const Citation: FC<{
   );
 };
 
-const ContentWithCitations: FC<{ content: string; messageData: any }> = ({
-  content,
-  messageData,
-}) => {
-  // Expect messageData to be the array of sources (DocumentChunk[]) directly
-  const sources = (messageData as DocumentChunk[] | undefined) ?? [];
-
+const MarkdownWithCitations: FC<{
+  content: string;
+  sources: DocumentChunk[];
+}> = ({ content, sources }) => {
   if (!content) return null;
 
-  const parts = content.split(/(\[\d+(?:,\s*\d+)*\])/g);
-
-  return (
-    <>
-      {parts.map((part, index) => {
-        const citationMatch = part.match(/\[(\d+(?:,\s*\d+)*)\]/);
-        if (citationMatch) {
-          const citationNumbers = citationMatch[1]
+  const processChildrenForCitations = (
+    nodes: React.ReactNode[]
+  ): React.ReactNode[] => {
+    return nodes.flatMap((node, idx) => {
+      if (typeof node === "string") {
+        const parts: React.ReactNode[] = [];
+        let lastIndex = 0;
+        const citationRegex = /(\[\d+(?:,\s*\d+)*\])/g;
+        let match: RegExpExecArray | null;
+        while ((match = citationRegex.exec(node)) !== null) {
+          if (match.index > lastIndex) {
+            parts.push(node.substring(lastIndex, match.index));
+          }
+          const citationNumbers = match[1]!
+            .substring(1, match[1]!.length - 1) // Remove brackets
             .split(",")
             .map((numStr) => parseInt(numStr.trim(), 10));
-          return citationNumbers.map((num, i) => {
-            const source = sources[num - 1]; // 1-indexed to 0-indexed
-            // const demoSource = DEMO_SOURCES[(num - 1) % DEMO_SOURCES.length]; // Cycle through demo sources
 
-            return (
+          citationNumbers.forEach((num, i) => {
+            const source = sources[num - 1]; // 1-indexed to 0-indexed
+            parts.push(
               <Citation
-                key={`${index}-${i}`}
+                key={`cite-idx${idx}-match${match!.index}-i${i}`}
                 num={num}
                 source={source}
-                // demoSource={demoSource}
               />
             );
           });
+          lastIndex = citationRegex.lastIndex;
         }
-        // Use simple span for non-citation parts
+        if (lastIndex < node.length) {
+          parts.push(node.substring(lastIndex));
+        }
+        return parts;
+      }
+      return node;
+    });
+  };
+
+  const customComponents = {
+    // Paragraphs with citation processing
+    p: (props: any) => {
+      const { children } = props;
+      return (
+        <p className="mb-4 leading-7 text-white">
+          {processChildrenForCitations(React.Children.toArray(children))}
+        </p>
+      );
+    },
+
+    // Headings
+    h1: (props: any) => (
+      <h1 className="text-2xl font-bold mb-4 mt-6 text-white">
+        {props.children}
+      </h1>
+    ),
+    h2: (props: any) => (
+      <h2 className="text-xl font-bold mb-3 mt-5 text-white">
+        {props.children}
+      </h2>
+    ),
+    h3: (props: any) => (
+      <h3 className="text-lg font-bold mb-3 mt-4 text-white">
+        {props.children}
+      </h3>
+    ),
+    h4: (props: any) => (
+      <h4 className="text-base font-bold mb-2 mt-3 text-white">
+        {props.children}
+      </h4>
+    ),
+    h5: (props: any) => (
+      <h5 className="text-sm font-bold mb-2 mt-3 text-white">
+        {props.children}
+      </h5>
+    ),
+    h6: (props: any) => (
+      <h6 className="text-xs font-bold mb-2 mt-3 text-white">
+        {props.children}
+      </h6>
+    ),
+
+    // Text formatting
+    strong: (props: any) => (
+      <strong className="font-bold text-white">{props.children}</strong>
+    ),
+    em: (props: any) => <em className="italic text-white">{props.children}</em>,
+
+    // Lists
+    ul: (props: any) => (
+      <ul className="list-disc list-inside mb-4 space-y-1 text-white pl-4">
+        {props.children}
+      </ul>
+    ),
+    ol: (props: any) => (
+      <ol className="list-decimal list-inside mb-4 space-y-1 text-white pl-4">
+        {props.children}
+      </ol>
+    ),
+    li: (props: any) => (
+      <li className="mb-1 text-white leading-6">
+        {processChildrenForCitations(React.Children.toArray(props.children))}
+      </li>
+    ),
+
+    // Code
+    code: (props: any) => {
+      const { node, inline, className, children, ...rest } = props;
+      if (inline) {
         return (
-          <span key={index} className="text-white">
-            {part}
-          </span>
+          <code
+            className="bg-gray-700 text-gray-200 px-1.5 py-0.5 rounded text-sm font-mono"
+            {...rest}
+          >
+            {children}
+          </code>
         );
-      })}
-    </>
+      }
+      return (
+        <code
+          className="block bg-gray-800 text-gray-200 p-3 rounded-md text-sm font-mono overflow-x-auto mb-4"
+          {...rest}
+        >
+          {children}
+        </code>
+      );
+    },
+    pre: (props: any) => (
+      <pre className="bg-gray-800 text-gray-200 p-4 rounded-md overflow-x-auto mb-4 border border-gray-600">
+        {props.children}
+      </pre>
+    ),
+
+    // Blockquotes
+    blockquote: (props: any) => (
+      <blockquote className="border-l-4 border-blue-500 pl-4 py-2 mb-4 italic text-gray-300 bg-gray-800/50 rounded-r">
+        {props.children}
+      </blockquote>
+    ),
+
+    // Tables
+    table: (props: any) => (
+      <div className="overflow-x-auto mb-4">
+        <table className="min-w-full border border-gray-600 rounded-lg overflow-hidden">
+          {props.children}
+        </table>
+      </div>
+    ),
+    thead: (props: any) => (
+      <thead className="bg-gray-700">{props.children}</thead>
+    ),
+    tbody: (props: any) => (
+      <tbody className="bg-gray-800">{props.children}</tbody>
+    ),
+    tr: (props: any) => (
+      <tr className="border-b border-gray-600">{props.children}</tr>
+    ),
+    th: (props: any) => (
+      <th className="px-4 py-2 text-left font-bold text-white border-r border-gray-600 last:border-r-0">
+        {props.children}
+      </th>
+    ),
+    td: (props: any) => (
+      <td className="px-4 py-2 text-white border-r border-gray-600 last:border-r-0">
+        {props.children}
+      </td>
+    ),
+
+    // Links
+    a: (props: any) => (
+      <a
+        href={props.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-400 hover:text-blue-300 underline"
+      >
+        {props.children}
+      </a>
+    ),
+
+    // Horizontal rule
+    hr: () => <hr className="my-6 border-gray-600" />,
+  };
+
+  return (
+    <div className="aui-md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={customComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 };
 
 const PerplexityAssistantMessage: FC = () => {
   const message = useMessage();
-  // Access the messageSources from context
   const { messageSources } = useChatPageContext();
 
-  // Extract text content from the message content parts array
   let messageText = "";
   if (message.content) {
-    // Find the first part with type 'text' and use its text content
     const textPart =
       Array.isArray(message.content) &&
       message.content.find((part) => part.type === "text" && "text" in part);
@@ -530,7 +684,6 @@ const PerplexityAssistantMessage: FC = () => {
     }
   }
 
-  // Get citation sources for this message
   const sources = messageSources.get(message.id) || [];
 
   return (
@@ -538,12 +691,11 @@ const PerplexityAssistantMessage: FC = () => {
       <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
         <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
 
+        {/* Use the new MarkdownWithCitations component */}
         {messageText && (
-          <ContentWithCitations
-            content={messageText}
-            messageData={sources} // Pass actual sources from our Map
-          />
+          <MarkdownWithCitations content={messageText} sources={sources} />
         )}
+
         {/* Fallback or if content is not string, MessagePrimitive.Content might handle it */}
         {!messageText && (
           <MessagePrimitive.Content components={{ Text: MarkdownText }} />
