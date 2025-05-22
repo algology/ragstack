@@ -3,10 +3,10 @@
 import { useState, /*useRef,*/ useEffect } from "react"; // useRef might not be needed
 // import { useChat, type Message as VercelAIMessage } from "@ai-sdk/react"; // Replaced by useChatRuntime
 import React, { type FC } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import { Settings, Info } from "lucide-react";
-import { ModeToggle } from "@/components/mode-toggle";
+// import Image from "next/image"; // Removed unused import
+// import Link from "next/link"; // Removed unused import
+// import { Settings, Info } from "lucide-react"; // Removed unused imports
+// import { ModeToggle } from "@/components/mode-toggle"; // Removed unused import
 import { cn } from "@/lib/utils";
 
 // Assistant UI Components
@@ -22,7 +22,7 @@ import {
   // useAssistantRuntime, // No longer needed directly for bridging
 } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk"; // NEW
-import type { Message as VercelAIMessage } from "ai"; // For typing if needed, though runtime handles types
+// import type { Message as VercelAIMessage } from "ai"; // Removed unused import VercelAIMessage
 
 import {
   ArrowDownIcon,
@@ -34,7 +34,7 @@ import {
   CopyIcon,
   // PaperclipIcon, // Commented out due to attachment UI being commented
   RefreshCwIcon,
-  SparkleIcon,
+  // SparkleIcon, // Removed unused import
 } from "lucide-react";
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
