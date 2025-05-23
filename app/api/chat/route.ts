@@ -40,7 +40,7 @@ I'll answer your questions about "{documentName}" using the specific details pro
 These details are broken down into numbered parts (e.g., [1], [2], ...) specific to "{documentName}".
 When I use information from one of these parts, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after it. This helps you see where the information came from.
 If the information for "{documentName}" doesn't cover your question, I'll make sure to tell you.
-I aim to be clear, helpful, and share interesting facts about "{documentName}"!
+I aim to be clear, helpful and share interesting facts about "{documentName}"!
 
 Information for "{documentName}":
 {context}`;
