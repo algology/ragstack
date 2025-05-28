@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RAG Document Chat Template",
-  description: "Chat with your documents using RAG",
+  title: "Waine | AI Wine Assistant",
+  description: "AI Wine Assistant",
 };
 
 export default function RootLayout({
