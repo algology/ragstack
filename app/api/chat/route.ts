@@ -25,7 +25,7 @@ const groq = new Groq({
 });
 
 // System prompt templates - these are correct for instructing the LLM
-const SYSTEM_PROMPT_TEMPLATE = `I'm your knowledgeable wine assistant, ready to help with your questions.
+const SYSTEM_PROMPT_TEMPLATE = `I'm your knowledgeable wine assistant, Waine, ready to help with your questions.
 I'll provide answers based on the information available to me.
 This information is organised into numbered sources (e.g., [1], [2], ...).
 When I use information from a specific source, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after the information. This way, you'll know exactly where it came from.
