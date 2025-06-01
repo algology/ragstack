@@ -13,7 +13,7 @@ const MATCH_COUNT = 10;
 
 export const runtime = "edge"; // Use edge runtime for Vercel AI SDK
 
-// Initialize OpenAI client for embeddings (can use Vercel's adapter too if preferred)
+// Initialize OpenAI client for embeddings
 const openaiEmbeddings = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -116,64 +116,144 @@ export async function POST(req: NextRequest) {
       userMessageText
     ); // 3. Log user message text
 
-    const embeddingResponse = await openaiEmbeddings.embeddings.create({
-      model: OPENAI_EMBEDDING_MODEL,
-      input: userMessageText, // Use the extracted string
-    });
-    const queryEmbedding = embeddingResponse.data[0].embedding;
-    console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
+    // Check if the query needs RAG search (avoid searching for simple greetings/conversational queries)
+    const shouldSearchRAG = (query: string): boolean => {
+      const normalizedQuery = query.toLowerCase().trim();
 
-    const rpcParams: RpcParams = {
-      query_embedding: queryEmbedding,
-      match_threshold: SIMILARITY_THRESHOLD,
-      match_count: MATCH_COUNT,
+      // Simple greetings and conversational phrases that don't need RAG
+      const nonSearchQueries = [
+        "hi",
+        "hello",
+        "hey",
+        "howdy",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "thanks",
+        "thank you",
+        "bye",
+        "goodbye",
+        "see you",
+        "ok",
+        "okay",
+        "yes",
+        "no",
+        "what",
+        "how are you",
+        "how do you do",
+        "nice to meet you",
+        "help",
+        "?",
+      ];
+
+      // If query is too short (less than 3 chars) or matches non-search patterns
+      if (normalizedQuery.length < 3) return false;
+      if (nonSearchQueries.includes(normalizedQuery)) return false;
+      if (nonSearchQueries.some((phrase) => normalizedQuery === phrase))
+        return false;
+
+      // Always search if it contains wine-related terms or technical questions
+      const wineTerms = [
+        "wine",
+        "grape",
+        "vineyard",
+        "bottle",
+        "vintage",
+        "alcohol",
+        "ferment",
+      ];
+      if (wineTerms.some((term) => normalizedQuery.includes(term))) return true;
+
+      // Search for questions that seem to need factual information
+      const questionWords = [
+        "what",
+        "how",
+        "why",
+        "when",
+        "where",
+        "which",
+        "tell me",
+        "explain",
+        "describe",
+      ];
+      if (
+        questionWords.some((word) => normalizedQuery.includes(word)) &&
+        normalizedQuery.length > 5
+      )
+        return true;
+
+      // Default to searching for longer queries
+      return normalizedQuery.length > 8;
     };
-    if (documentId) {
-      const numericDocumentId = parseInt(documentId, 10);
-      if (!isNaN(numericDocumentId)) {
-        rpcParams.filter_document_id = numericDocumentId;
-        console.log(
-          "API_CHAT: Adding filter_document_id (numeric) to RPC params:",
-          numericDocumentId
-        ); // 5. Log if documentId is used
-      } else {
-        console.warn(
-          `API_CHAT: documentId '${documentId}' is not a valid number. Skipping filter.`
+
+    const needsRAGSearch = shouldSearchRAG(userMessageText);
+    console.log("API_CHAT: Needs RAG search:", needsRAGSearch);
+
+    let chunks: DocumentChunk[] = [];
+
+    if (needsRAGSearch) {
+      const embeddingResponse = await openaiEmbeddings.embeddings.create({
+        model: OPENAI_EMBEDDING_MODEL,
+        input: userMessageText, // Use the extracted string
+      });
+      const queryEmbedding = embeddingResponse.data[0].embedding;
+      console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
+
+      const rpcParams: RpcParams = {
+        query_embedding: queryEmbedding,
+        match_threshold: SIMILARITY_THRESHOLD,
+        match_count: MATCH_COUNT,
+      };
+      if (documentId) {
+        const numericDocumentId = parseInt(documentId, 10);
+        if (!isNaN(numericDocumentId)) {
+          rpcParams.filter_document_id = numericDocumentId;
+          console.log(
+            "API_CHAT: Adding filter_document_id (numeric) to RPC params:",
+            numericDocumentId
+          ); // 5. Log if documentId is used
+        } else {
+          console.warn(
+            `API_CHAT: documentId '${documentId}' is not a valid number. Skipping filter.`
+          );
+        }
+      }
+
+      console.log(
+        "API_CHAT: Calling Supabase RPC 'match_document_chunks' with params:",
+        {
+          match_threshold: rpcParams.match_threshold,
+          match_count: rpcParams.match_count,
+          filter_document_id: rpcParams.filter_document_id,
+        }
+      );
+      const { data: chunkData, error: matchError } = await supabase.rpc(
+        "match_document_chunks",
+        rpcParams
+      );
+
+      if (matchError) {
+        console.error(
+          "API_CHAT: Error from Supabase RPC 'match_document_chunks':",
+          JSON.stringify(matchError, null, 2)
+        ); // 6a. Critical log for Supabase error
+        // Also log the rpcParams that caused the error
+        console.error(
+          "API_CHAT: RPC Params that caused error:",
+          JSON.stringify(rpcParams, null, 2)
+        );
+        throw new Error(
+          `Failed to retrieve relevant document chunks: ${matchError.message}`
         );
       }
+      chunks = chunkData || [];
+      console.log(
+        "API_CHAT: Supabase RPC successful. Chunks count:",
+        chunks?.length ?? 0
+      ); // 6b. Log RPC success
+    } else {
+      console.log("API_CHAT: Skipping RAG search for conversational query");
     }
-
-    console.log(
-      "API_CHAT: Calling Supabase RPC 'match_document_chunks' with params:",
-      {
-        match_threshold: rpcParams.match_threshold,
-        match_count: rpcParams.match_count,
-        filter_document_id: rpcParams.filter_document_id,
-      }
-    );
-    const { data: chunks, error: matchError } = await supabase.rpc(
-      "match_document_chunks",
-      rpcParams
-    );
-
-    if (matchError) {
-      console.error(
-        "API_CHAT: Error from Supabase RPC 'match_document_chunks':",
-        JSON.stringify(matchError, null, 2)
-      ); // 6a. Critical log for Supabase error
-      // Also log the rpcParams that caused the error
-      console.error(
-        "API_CHAT: RPC Params that caused error:",
-        JSON.stringify(rpcParams, null, 2)
-      );
-      throw new Error(
-        `Failed to retrieve relevant document chunks: ${matchError.message}`
-      );
-    }
-    console.log(
-      "API_CHAT: Supabase RPC successful. Chunks count:",
-      chunks?.length ?? 0
-    ); // 6b. Log RPC success
 
     const numberedContext =
       chunks && chunks.length > 0
@@ -189,156 +269,157 @@ export async function POST(req: NextRequest) {
     let promptTemplate = SYSTEM_PROMPT_TEMPLATE;
     if (documentName) {
       promptTemplate = SYSTEM_PROMPT_TEMPLATE_WITH_DOC.replace(
-        "{documentName}",
+        /{documentName}/g,
         documentName
       );
     }
-    const formattedSystemPrompt = promptTemplate.replace(
+
+    // Sanitize the context to remove problematic Unicode characters
+    const sanitizedContext = numberedContext
+      .replace(/[\u2018\u2019]/g, "'") // Replace smart quotes with regular quotes
+      .replace(/[\u201C\u201D]/g, '"') // Replace smart double quotes
+      .replace(/[\u2013\u2014]/g, "-") // Replace em/en dashes with regular dash
+      .replace(/[\u2026]/g, "...") // Replace ellipsis with three dots
+      .replace(/[^\x00-\x7F]/g, ""); // Remove any remaining non-ASCII characters
+
+    // Also sanitize the prompt template
+    const sanitizedPromptTemplate = promptTemplate
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/[\u2026]/g, "...")
+      .replace(/[^\x00-\x7F]/g, "");
+
+    const formattedSystemPrompt = sanitizedPromptTemplate.replace(
       "{context}",
-      numberedContext
+      sanitizedContext
     );
     console.log("API_CHAT: Prepared system prompt for LLM"); // 8. Log prompt prep
 
-    // Construct history for Gemini
-    const history: Content[] = messages
-      .filter(
-        (msg): msg is Message & { role: "user" | "assistant" } =>
-          msg.role === "user" || msg.role === "assistant"
-      )
-      .map((msg) => {
-        let text = "";
-        if (typeof msg.content === "string") {
-          text = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          // Ensure msg.content is treated as an array of parts with a text property
-          const textPart = (
-            msg.content as Array<{ type: string; text?: string }>
-          ).find(
-            (part) => part.type === "text" && typeof part.text === "string"
-          );
-          if (textPart && textPart.text) {
-            text = textPart.text;
-          }
-        }
-        return {
-          role: msg.role === "user" ? "user" : "model", // Gemini uses "model" for assistant
-          parts: [{ text }],
-        };
-      })
-      .slice(0, -1); // Remove the last user message, it will be the new prompt
-
-    // The last user message is the current prompt
-    const currentMessage = messages[messages.length - 1];
-    let currentPrompt = "";
-    if (typeof currentMessage.content === "string") {
-      currentPrompt = currentMessage.content;
-    } else if (Array.isArray(currentMessage.content)) {
-      const textPart = (
-        currentMessage.content as Array<{ type: string; text?: string }>
-      ).find((part) => part.type === "text" && typeof part.text === "string");
-      if (textPart && textPart.text) {
-        currentPrompt = textPart.text;
-      }
-    }
-
     console.log("API_CHAT: Prepared messages for Gemini"); // 9. Log Gemini messages prep
 
+    // Prepare the complete message history for Vercel AI SDK
+    const chatMessages: Message[] = messages.map((msg, index) => {
+      let content = "";
+      if (typeof msg.content === "string") {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        const textPart = (
+          msg.content as Array<{ type: string; text?: string }>
+        ).find((part) => part.type === "text" && typeof part.text === "string");
+        if (textPart && textPart.text) {
+          content = textPart.text;
+        }
+      }
+
+      // Sanitize message content
+      const sanitizedContent = content
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2013\u2014]/g, "-")
+        .replace(/[\u2026]/g, "...")
+        .replace(/[^\x00-\x7F]/g, "");
+
+      return {
+        id: msg.id || `msg-${index}`,
+        role: msg.role,
+        content: sanitizedContent,
+      };
+    });
+
+    console.log("API_CHAT: Using Google Generative AI directly");
+
+    // Create Gemini model
     const model = genAI.getGenerativeModel({
       model: GEMINI_CHAT_MODEL,
       systemInstruction: formattedSystemPrompt,
-      // Tools are configured in startChat for Gemini 1.5 models with googleSearchRetrieval
     });
 
+    // Prepare history for Gemini (excluding last message)
+    const history: Content[] = chatMessages.slice(0, -1).map((msg) => ({
+      role: msg.role === "user" ? "user" : "model",
+      parts: [{ text: msg.content }],
+    }));
+
+    // Start chat with history
     const chat = model.startChat({
       history: history,
       tools: enableSearch ? [{ googleSearchRetrieval: {} }] : undefined,
-      generationConfig: {
-        // temperature: 0.9, // Example: Adjust temperature if needed
-        // topK: 1, // Example: Adjust topK if needed
-        // topP: 1, // Example: Adjust topP if needed
-        // maxOutputTokens: 2048, // Example: Adjust max output tokens if needed
-      },
     });
 
+    // Get the last message as the current prompt
+    const currentPrompt =
+      chatMessages[chatMessages.length - 1]?.content || "Hello";
+
+    // Stream the response
     const result = await chat.sendMessageStream(currentPrompt);
 
-    console.log("API_CHAT: Received Gemini stream response object"); // 10. Log Gemini response received
+    console.log("API_CHAT: Creating proper AI SDK stream response");
 
-    // Convert Gemini stream to Vercel AI SDK stream
+    // Create a proper AI SDK compatible stream
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
 
-        // streamDataPayload will now be the RAG chunks array directly for simplicity
-        const ragSourcesPayload: DocumentChunk[] = chunks || [];
-        let groundingMetadataToAttachLater: any | undefined = undefined; // We'll capture but not send with 2: for now
-
-        let initialDataSent = false;
-
-        for await (const geminiResponseChunk of result.stream) {
-          // Capture grounding metadata if available and search is enabled
-          if (
-            enableSearch &&
-            geminiResponseChunk.candidates &&
-            geminiResponseChunk.candidates[0] &&
-            geminiResponseChunk.candidates[0].groundingMetadata &&
-            !groundingMetadataToAttachLater // Only capture once
-          ) {
-            groundingMetadataToAttachLater =
-              geminiResponseChunk.candidates[0].groundingMetadata;
-            console.log(
-              "API_CHAT: Captured grounding metadata (will be processed differently/later for this test)."
-            );
-          }
-
-          // Send initial RAG sources payload before the first text chunk
-          if (!initialDataSent) {
-            // For this test, only send ragSourcesPayload directly
-            const initialDataMessage = `2:${JSON.stringify(
-              ragSourcesPayload
-            )}\n`;
-            controller.enqueue(encoder.encode(initialDataMessage));
-            initialDataSent = true;
-            console.log(
-              "API_CHAT: Enqueued initial RAG sources data (array form):",
-              ragSourcesPayload
-            );
-            // Note: groundingMetadataToAttachLater is captured but not sent in this simplified 2: prefix data
-          }
-
-          // Send the text content of the chunk
-          const chunkText = geminiResponseChunk.text();
-          if (chunkText) {
-            const formattedTextChunk = `0:${JSON.stringify(chunkText)}\n`;
-            controller.enqueue(encoder.encode(formattedTextChunk));
-          }
-        }
-
-        // Fallback: If the stream ended, no text was ever sent, but we have RAG data and it wasn't sent.
-        if (!initialDataSent && ragSourcesPayload.length > 0) {
-          const fallbackDataMessage = `2:${JSON.stringify(
-            ragSourcesPayload
-          )}\n`;
-          controller.enqueue(encoder.encode(fallbackDataMessage));
-          console.log(
-            "API_CHAT: Enqueued RAG data (array form) as a fallback:",
-            ragSourcesPayload
+        try {
+          // Send initial data with RAG sources
+          const initialPayload = { ragSources: chunks || [] };
+          controller.enqueue(
+            encoder.encode(
+              `2:[${JSON.stringify(JSON.stringify(initialPayload))}]\n`
+            )
           );
+
+          let groundingMetadata: any = null;
+
+          // Stream the text response and capture metadata
+          for await (const chunk of result.stream) {
+            if (chunk.candidates && chunk.candidates[0].content?.parts) {
+              for (const part of chunk.candidates[0].content.parts) {
+                if (part.text) {
+                  controller.enqueue(
+                    encoder.encode(`0:${JSON.stringify(part.text)}\n`)
+                  );
+                }
+              }
+            }
+
+            // Capture grounding metadata if available
+            if (chunk.candidates && chunk.candidates[0].groundingMetadata) {
+              groundingMetadata = chunk.candidates[0].groundingMetadata;
+              console.log(
+                "API_CHAT: Captured grounding metadata:",
+                JSON.stringify(groundingMetadata)
+              );
+            }
+          }
+
+          // Send final payload with both RAG sources and grounding metadata
+          if (groundingMetadata) {
+            const finalPayload = {
+              ragSources: chunks || [],
+              groundingMetadata: groundingMetadata,
+            };
+            controller.enqueue(
+              encoder.encode(
+                `2:[${JSON.stringify(JSON.stringify(finalPayload))}]\n`
+              )
+            );
+            console.log("API_CHAT: Sent final payload with grounding metadata");
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error("Stream error:", error);
+          controller.error(error);
         }
-
-        // TODO: If groundingMetadataToAttachLater was captured, consider how to send it.
-        // For Vercel AI SDK, multiple distinct `2:` prefixed objects become an array in `unstable_data`.
-        // Or, it might need to be a separate named stream if the SDK supports that explicitly.
-        // For now, this test focuses on getting RAG citations (via simple array in 2: prefix) working.
-
-        controller.close();
       },
     });
 
     return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
-        "X-Experimental-Stream-Data": "true", // Crucial for Vercel AI SDK to process prefixed data
+        "X-Experimental-Stream-Data": "true",
       },
     });
   } catch (error: any) {

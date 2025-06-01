@@ -41,21 +41,30 @@ interface DocumentChunk {
   name?: string;
 }
 
+interface WebSource {
+  uri?: string;
+  title?: string;
+}
+
+interface BlendedSource {
+  type: "rag" | "web";
+  content: string;
+  name: string;
+  uri?: string; // For web sources
+}
+
 interface GroundingMetadata {
   searchEntryPoint?: {
     renderedContent?: string;
   };
   webSearchQueries?: string[];
   groundingChunks?: Array<{
-    web?: {
-      uri?: string;
-      title?: string;
-    };
+    web?: WebSource;
   }>;
 }
 
 type MessageSourcesMap = Map<string, DocumentChunk[]>;
-type MessageGroundingMap = Map<string, GroundingMetadata>;
+type MessageGroundingMap = Map<string, GroundingMetadata | undefined>;
 
 export default function ChatPage() {
   const [currentChatContextName, setCurrentChatContextName] =
@@ -93,89 +102,92 @@ export default function ChatPage() {
           "CLIENT: Assistant message finished. Message ID:",
           message.id
         );
-        console.log(
-          "CLIENT: Full assistant message object in onFinish:",
-          JSON.stringify(message, null, 2)
-        );
 
-        let sourcesToSet: DocumentChunk[] | undefined = undefined;
-        let groundingToSet: GroundingMetadata | undefined = undefined; // Will remain undefined for now
+        let sourcesToSet: DocumentChunk[] = [];
+        let groundingToSet: GroundingMetadata | undefined = undefined;
 
         try {
+          // Handle the unstable_data format from our custom streaming
           const unstableDataArray = (message.metadata as any)?.unstable_data;
 
-          // Check if unstable_data itself is the array of RAG sources
-          if (Array.isArray(unstableDataArray)) {
+          if (
+            Array.isArray(unstableDataArray) &&
+            unstableDataArray.length > 0
+          ) {
             console.log(
-              "CLIENT: unstable_data is an array. Processing as RAG sources:",
-              JSON.stringify(unstableDataArray, null, 2)
+              "CLIENT: Received unstable_data array:",
+              unstableDataArray
             );
 
-            // Ensure all elements are likely valid chunk objects before mapping
-            const isValidChunkArray = unstableDataArray.every(
-              (item) =>
-                item &&
-                typeof item === "object" &&
-                "content" in item &&
-                "name" in item
-            );
+            for (let i = 0; i < unstableDataArray.length; i++) {
+              const payload = unstableDataArray[i];
+              console.log(`CLIENT: Processing payload ${i}:`, payload);
 
-            if (isValidChunkArray && unstableDataArray.length > 0) {
-              sourcesToSet = unstableDataArray.map((src: any) => ({
-                id: src.id?.toString(),
-                content: src.content || "",
-                name: src.name || "Unknown Source",
-              })) as DocumentChunk[];
-              console.log(
-                "CLIENT: Successfully processed unstable_data as RAG sources array:",
-                JSON.stringify(sourcesToSet, null, 2)
-              );
-            } else if (unstableDataArray.length === 0) {
-              console.log(
-                "CLIENT: unstable_data is an empty array. Setting empty RAG sources."
-              );
-              sourcesToSet = []; // Explicitly set to empty array
-            } else {
-              console.warn(
-                "CLIENT: unstable_data is an array, but its elements are not valid chunk objects or it's empty. Received:",
-                unstableDataArray
-              );
+              let parsedPayload = null;
+
+              if (typeof payload === "string") {
+                try {
+                  parsedPayload = JSON.parse(payload);
+                  console.log(`CLIENT: Parsed payload ${i}:`, parsedPayload);
+                } catch (parseError) {
+                  console.error(
+                    `CLIENT: Error parsing payload ${i} JSON:`,
+                    parseError
+                  );
+                  continue;
+                }
+              } else if (typeof payload === "object" && payload !== null) {
+                parsedPayload = payload;
+                console.log(
+                  `CLIENT: Payload ${i} is already an object:`,
+                  parsedPayload
+                );
+              }
+
+              if (parsedPayload) {
+                if (
+                  parsedPayload.ragSources &&
+                  Array.isArray(parsedPayload.ragSources)
+                ) {
+                  sourcesToSet = parsedPayload.ragSources;
+                  console.log(
+                    `CLIENT: Updated RAG sources from payload ${i}:`,
+                    sourcesToSet
+                  );
+                }
+
+                if (parsedPayload.groundingMetadata) {
+                  groundingToSet = parsedPayload.groundingMetadata;
+                  console.log(
+                    `CLIENT: Updated grounding metadata from payload ${i}:`,
+                    groundingToSet
+                  );
+                }
+              }
             }
           } else {
-            console.warn(
-              "CLIENT: message.metadata.unstable_data is not an array as expected. Received:",
+            console.log(
+              "CLIENT: unstable_data is not an array or is empty:",
+              typeof unstableDataArray,
               unstableDataArray
             );
           }
-        } catch (e) {
-          console.error(
-            "CLIENT: Error during data parsing in onFinish:",
-            e,
-            "\nMessage object that caused error:",
-            JSON.stringify(message, null, 2)
-          );
-          sourcesToSet = undefined;
-          groundingToSet = undefined;
+        } catch (error) {
+          console.error("CLIENT: Error processing message data:", error);
         }
 
-        setMessageSources((prevMap) => {
-          const newMap = new Map(prevMap);
-          newMap.set(message.id, sourcesToSet || []);
-          console.log(
-            `CLIENT: State update for RAG sources for message ${message.id}:`,
-            sourcesToSet || []
-          );
+        // Update state with the retrieved data
+        console.log("CLIENT: Setting message sources:", sourcesToSet);
+        setMessageSources((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(message.id, sourcesToSet);
           return newMap;
         });
 
-        setMessageGrounding((prevMap) => {
-          const newMap = new Map(prevMap);
-          if (newMap.has(message.id)) {
-            newMap.delete(message.id);
-            console.log(
-              `CLIENT: Cleared grounding metadata for message ${message.id} (RAG only test).`
-            );
-          }
+        console.log("CLIENT: Setting message grounding:", groundingToSet);
+        setMessageGrounding((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(message.id, groundingToSet);
           return newMap;
         });
       }
@@ -284,7 +296,14 @@ const ThreadWelcome: FC = () => {
     <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
       <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-12 px-4">
         <div className="flex w-full flex-grow flex-col items-center justify-center">
-          <Image src="/logo2.png" alt="Wine Logo" width={200} height={100} />
+          <Image
+            src="/logo2.png"
+            alt="Wine Logo"
+            width={200}
+            height={100}
+            priority
+            style={{ width: "auto", height: "auto" }}
+          />
         </div>
         <Composer />
       </div>
@@ -370,28 +389,41 @@ const PerplexityUserMessage: FC = () => {
 
 const Citation: FC<{
   num: number;
-  source?: DocumentChunk;
+  source?: BlendedSource;
 }> = ({ num, source }) => {
   const [showTooltip, setShowTooltip] = useState(false);
 
-  const displaySource = source;
-  const tooltipText = displaySource
-    ? `${displaySource.name ? displaySource.name + ": " : ""}${
-        displaySource.content
-      }`
+  const isWebSource = source?.type === "web";
+  const tooltipText = source
+    ? `${source.name}${source.content ? ": " + source.content : ""}`
     : "Source not available";
+
+  const handleClick = () => {
+    if (isWebSource && source?.uri) {
+      window.open(source.uri, "_blank", "noopener,noreferrer");
+    }
+  };
 
   return (
     <span className="whitespace-nowrap relative inline-block">
       <a
-        className="mr-[2px] citation ml-xs inline cursor-pointer"
+        className={`mr-[2px] citation ml-xs inline cursor-pointer ${
+          isWebSource ? "hover:text-blue-300" : ""
+        }`}
         data-state={showTooltip ? "open" : "closed"}
         aria-label={tooltipText}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
+        onClick={handleClick}
       >
         <span className="relative select-none align-middle -top-px font-sans text-base text-textMain dark:text-textMainDark selection:bg-super/50 selection:text-textMain dark:selection:bg-superDuper/10 dark:selection:text-superDark">
-          <span className="hover:bg-super dark:hover:bg-superDark dark:hover:text-backgroundDark min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums hover:text-white py-[0.1875rem] px-[0.3rem] border border-borderMain/50 dark:border-borderMainDark/50 bg-offsetPlus dark:bg-offsetPlusDark">
+          <span
+            className={`min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums py-[0.1875rem] px-[0.3rem] border ${
+              isWebSource
+                ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-700"
+                : "hover:bg-super dark:hover:bg-superDark dark:hover:text-backgroundDark hover:text-white border-borderMain/50 dark:border-borderMainDark/50 bg-offsetPlus dark:bg-offsetPlusDark"
+            }`}
+          >
             {num}
           </span>
         </span>
@@ -401,13 +433,27 @@ const Citation: FC<{
           className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden block"
           style={{ minWidth: "250px" }}
         >
-          {displaySource?.name && (
-            <span className="font-semibold mb-1 text-blue-300 truncate block">
-              {displaySource.name}
+          <div className="flex items-center gap-2 mb-1">
+            <span
+              className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
+                isWebSource
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-600 text-white"
+              }`}
+            >
+              {isWebSource ? "WEB" : "DOC"}
             </span>
+            <span className="font-semibold text-blue-300 truncate flex-1">
+              {source?.name}
+            </span>
+          </div>
+          {isWebSource && source?.uri && (
+            <div className="text-blue-400 text-xs mb-1 truncate">
+              {source.uri}
+            </div>
           )}
           <span className="break-words whitespace-normal overflow-y-auto max-h-40 block">
-            {displaySource?.content || "Source details not available."}
+            {source?.content || "Source details not available."}
           </span>
         </span>
       )}
@@ -417,7 +463,7 @@ const Citation: FC<{
 
 const MarkdownWithCitations: FC<{
   content: string;
-  sources: DocumentChunk[];
+  sources: BlendedSource[];
 }> = ({ content, sources }) => {
   if (!content) return null;
 
@@ -612,79 +658,114 @@ const PerplexityAssistantMessage: FC = () => {
     }
   }
 
-  const sources = messageSources.get(message.id) || [];
+  const ragSources = messageSources.get(message.id) || [];
   const grounding = messageGrounding.get(message.id);
+
+  // Create blended sources combining RAG and web sources
+  const blendedSources: BlendedSource[] = [
+    // Add RAG sources first
+    ...ragSources.map(
+      (source): BlendedSource => ({
+        type: "rag",
+        content: source.content,
+        name: source.name || "Document",
+      })
+    ),
+    // Add web sources from grounding metadata
+    ...(grounding?.groundingChunks?.map(
+      (chunk, index): BlendedSource => ({
+        type: "web",
+        content: chunk.web?.title || "Web search result",
+        name: chunk.web?.title || `Web Source ${index + 1}`,
+        uri: chunk.web?.uri,
+      })
+    ) || []),
+  ];
+
+  // Only show sources if there are any and they were actually cited
+  const shouldShowSources =
+    blendedSources.length > 0 && messageText.includes("[");
 
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
       <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
         <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
 
-        {grounding?.searchEntryPoint?.renderedContent && (
-          <div
-            className="mb-4 p-3 border border-gray-600 rounded-lg bg-gray-800/50 overflow-x-auto"
-            dangerouslySetInnerHTML={{
-              __html: grounding.searchEntryPoint.renderedContent,
-            }}
-          />
-        )}
-
         {messageText && (
-          <MarkdownWithCitations content={messageText} sources={sources} />
+          <MarkdownWithCitations
+            content={messageText}
+            sources={blendedSources}
+          />
         )}
 
         {!messageText && (
           <MessagePrimitive.Content components={{ Text: MarkdownText }} />
         )}
 
-        {grounding?.webSearchQueries &&
-          grounding.webSearchQueries.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-gray-700/50">
-              <h4 className="text-sm font-semibold text-gray-400 mb-2">
-                Related searches:
-              </h4>
-              <ul className="flex flex-wrap gap-2">
-                {grounding.webSearchQueries.map((query, index) => (
-                  <li key={`webquery-${index}`}>
+        {shouldShowSources && (
+          <div className="mt-6 pt-4 border-t border-gray-700/30">
+            <div className="flex flex-wrap gap-3">
+              {blendedSources.map((source, index) => (
+                <div key={`source-${index}`} className="group relative">
+                  {source.type === "web" && source.uri ? (
                     <a
-                      href={`https://www.google.com/search?q=${encodeURIComponent(
-                        query
-                      )}`}
+                      href={source.uri}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs bg-gray-700 hover:bg-gray-600 text-blue-300 px-2 py-1 rounded-full"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-600/50 bg-gray-800/30 hover:bg-gray-700/50 transition-colors duration-200 cursor-pointer"
                     >
-                      {query}
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-blue-600/20 flex items-center justify-center">
+                          <svg
+                            className="w-2.5 h-2.5 text-blue-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+                            <path d="M3.6 9h16.8" />
+                            <path d="M3.6 15h16.8" />
+                            <path d="M11.5 3a17 17 0 0 0 0 18" />
+                            <path d="M12.5 3a17 17 0 0 1 0 18" />
+                          </svg>
+                        </div>
+                        <span className="text-xs font-medium text-gray-300 group-hover:text-white transition-colors">
+                          [{index + 1}]
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">
+                        {source.name}
+                      </span>
                     </a>
-                  </li>
-                ))}
-              </ul>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-600/50 bg-gray-800/30">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-gray-600/20 flex items-center justify-center">
+                          <svg
+                            className="w-2.5 h-2.5 text-gray-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14,2 14,8 20,8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                            <polyline points="10,9 9,9 8,9" />
+                          </svg>
+                        </div>
+                        <span className="text-xs font-medium text-gray-300">
+                          [{index + 1}]
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-400 truncate max-w-[200px]">
+                        {source.name.replace(".pdf", "")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
-
-        {grounding?.groundingChunks && grounding.groundingChunks.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-gray-700/50">
-            <h4 className="text-sm font-semibold text-gray-400 mb-2">
-              Web sources:
-            </h4>
-            <ul className="space-y-1">
-              {grounding.groundingChunks.map(
-                (gChunk, index) =>
-                  gChunk.web?.uri && (
-                    <li key={`webchunk-${index}`} className="text-xs">
-                      <a
-                        href={gChunk.web.uri}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 hover:underline truncate block"
-                        title={gChunk.web.uri}
-                      >
-                        {gChunk.web.title || gChunk.web.uri}
-                      </a>
-                    </li>
-                  )
-              )}
-            </ul>
           </div>
         )}
       </div>
