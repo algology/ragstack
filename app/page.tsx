@@ -1,30 +1,24 @@
 "use client";
 
-import { useState, /*useRef,*/ useEffect } from "react"; // useRef might not be needed
-// import { useChat, type Message as VercelAIMessage } from "@ai-sdk/react"; // Replaced by useChatRuntime
+import { useState, useEffect, useMemo } from "react";
 import React, { type FC } from "react";
-import Image from "next/image"; // Removed unused import
-// import Link from "next/link"; // Removed unused import
-// import { Settings, Info } from "lucide-react"; // Removed unused imports
-// import { ModeToggle } from "@/components/mode-toggle"; // Removed unused import
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 // Assistant UI Components
 import {
-  AssistantRuntimeProvider, // NEW
+  AssistantRuntimeProvider,
   ActionBarPrimitive,
   BranchPickerPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
-  useMessage, // IMPORT useMessage
-  type ThreadMessage, // IMPORT ThreadMessage
-  // useAssistantRuntime, // No longer needed directly for bridging
+  useMessage,
+  type ThreadMessage,
 } from "@assistant-ui/react";
-import { useChatRuntime } from "@assistant-ui/react-ai-sdk"; // NEW
-// import type { Message as VercelAIMessage } from "ai"; // Removed unused import VercelAIMessage
+import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 
 import {
   ArrowDownIcon,
@@ -34,73 +28,34 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
-  // PaperclipIcon, // Commented out due to attachment UI being commented
+  GlobeIcon,
   RefreshCwIcon,
-  // SparkleIcon, // Removed unused import
 } from "lucide-react";
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-// import { // Attachment components still commented out
-//   ComposerAttachments,
-//   UserMessageAttachments,
-// } from "@/components/assistant-ui/attachment";
 
-// Define DocumentChunk interface based on what's expected from the backend
 interface DocumentChunk {
-  id?: string; // Or number, depending on your DB schema for chunks
+  id?: string;
   content: string;
-  name?: string; // Document name, if available per chunk
-  // Add any other relevant properties that your backend sends for each chunk
+  name?: string;
 }
 
-// For demonstration - sample sources to display in tooltips when actual sources aren't available
-// const DEMO_SOURCES: DocumentChunk[] = [
-//   {
-//     id: "1",
-//     content:
-//       "Wine is an alcoholic drink made from fermented grapes. Yeast consumes the sugar in the grapes and converts it to ethanol and carbon dioxide, releasing heat in the process.",
-//     name: "Wine_Overview.pdf",
-//   },
-//   {
-//     id: "2",
-//     content:
-//       "The earliest evidence of a wine production facility is the Areni-1 winery in Armenia and is at least 6,100 years old.",
-//     name: "Wine_History.txt",
-//   },
-//   {
-//     id: "3",
-//     content:
-//       "Wine grapes grow almost exclusively between 30 and 50 degrees latitude north and south of the equator.",
-//     name: "Wine_Geography.pdf",
-//   },
-//   {
-//     id: "4",
-//     content:
-//       "Wines made from fruits other than grapes include rice wine, pomegranate wine, apple wine and elderberry wine.",
-//     name: "Wine_Varieties.txt",
-//   },
-//   {
-//     id: "5",
-//     content:
-//       "Wine has been produced for thousands of years, with evidence of ancient wine production in Georgia from 8000 BC, Iran from 7000 BC, and Sicily from 4000 BC.",
-//     name: "Wine_History.txt",
-//   },
-// ];
+interface GroundingMetadata {
+  searchEntryPoint?: {
+    renderedContent?: string;
+  };
+  webSearchQueries?: string[];
+  groundingChunks?: Array<{
+    web?: {
+      uri?: string;
+      title?: string;
+    };
+  }>;
+}
 
-// Message sources map type
 type MessageSourcesMap = Map<string, DocumentChunk[]>;
-
-// Remove ChatErrorDisplay as it is unused
-// const ChatErrorDisplay: FC<{ error: Error | undefined }> = ({ error }) => {
-//   if (!error) return null;
-//   return (
-//     <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-//       <strong className="font-bold">Error:</strong>
-//       <span className="block sm:inline"> {error.message}</span>
-//     </div>
-//   );
-// };
+type MessageGroundingMap = Map<string, GroundingMetadata>;
 
 export default function ChatPage() {
   const [currentChatContextName, setCurrentChatContextName] =
@@ -108,128 +63,125 @@ export default function ChatPage() {
   const [currentChatContextId, setCurrentChatContextId] = useState<
     string | undefined
   >(undefined);
-
-  // Add state to store citation sources per message
+  const [isSearchEnabled, setIsSearchEnabled] = useState<boolean>(false);
   const [messageSources, setMessageSources] = useState<MessageSourcesMap>(
     new Map()
   );
+  const [messageGrounding, setMessageGrounding] = useState<MessageGroundingMap>(
+    new Map()
+  );
 
-  const runtime = useChatRuntime({
-    api: "/api/chat",
-    initialMessages: [], // Start with empty, or load from history if implemented
-    body: {
-      documentId: currentChatContextId, // This will be the initial value
+  const chatRuntimeBody = useMemo(
+    () => ({
+      documentId: currentChatContextId,
       documentName:
         currentChatContextName === "All Documents"
           ? undefined
           : currentChatContextName,
-    },
+      enableSearch: isSearchEnabled,
+    }),
+    [currentChatContextId, currentChatContextName, isSearchEnabled]
+  );
+
+  const runtime = useChatRuntime({
+    api: "/api/chat",
+    initialMessages: [],
+    body: chatRuntimeBody,
     onFinish: (message: ThreadMessage) => {
       if (message.role === "assistant") {
         console.log(
           "CLIENT: Assistant message finished. Message ID:",
           message.id
         );
-        // Log the entire incoming message object to inspect its structure
         console.log(
           "CLIENT: Full assistant message object in onFinish:",
-          JSON.stringify(message, null, 2) // Keep this log for now, it's useful
+          JSON.stringify(message, null, 2)
         );
 
-        try {
-          let sourcesToSet: DocumentChunk[] | undefined = undefined;
+        let sourcesToSet: DocumentChunk[] | undefined = undefined;
+        let groundingToSet: GroundingMetadata | undefined = undefined; // Will remain undefined for now
 
-          // Access sources from message.metadata.unstable_data
-          if (
-            message.metadata &&
-            (message.metadata as any).unstable_data &&
-            Array.isArray((message.metadata as any).unstable_data)
-          ) {
-            const potentialSources = (message.metadata as any)
-              .unstable_data as any[];
-            // Basic check to see if the first item looks like a DocumentChunk
-            if (
-              potentialSources.length > 0 &&
-              typeof potentialSources[0] === "object" &&
-              potentialSources[0] !== null &&
-              "content" in potentialSources[0] && // Ensure 'content' property exists
-              ("name" in potentialSources[0] || "id" in potentialSources[0]) // Ensure 'name' or 'id' exists
-            ) {
-              console.log(
-                "CLIENT: Found sources in message.metadata.unstable_data:",
-                JSON.stringify(potentialSources, null, 2)
-              );
-              // Ensure all required fields for DocumentChunk are present or provide defaults
-              sourcesToSet = potentialSources.map((src) => ({
-                id: src.id?.toString(), // Ensure id is string, if it exists
-                content: src.content,
-                name: src.name,
-                // similarity: src.similarity, // if you add similarity to DocumentChunk
+        try {
+          const unstableDataArray = (message.metadata as any)?.unstable_data;
+
+          // Check if unstable_data itself is the array of RAG sources
+          if (Array.isArray(unstableDataArray)) {
+            console.log(
+              "CLIENT: unstable_data is an array. Processing as RAG sources:",
+              JSON.stringify(unstableDataArray, null, 2)
+            );
+
+            // Ensure all elements are likely valid chunk objects before mapping
+            const isValidChunkArray = unstableDataArray.every(
+              (item) =>
+                item &&
+                typeof item === "object" &&
+                "content" in item &&
+                "name" in item
+            );
+
+            if (isValidChunkArray && unstableDataArray.length > 0) {
+              sourcesToSet = unstableDataArray.map((src: any) => ({
+                id: src.id?.toString(),
+                content: src.content || "",
+                name: src.name || "Unknown Source",
               })) as DocumentChunk[];
-            } else if (potentialSources.length === 0) {
               console.log(
-                "CLIENT: message.metadata.unstable_data is an empty array."
+                "CLIENT: Successfully processed unstable_data as RAG sources array:",
+                JSON.stringify(sourcesToSet, null, 2)
               );
-              sourcesToSet = []; // Explicitly set to empty array for this message
+            } else if (unstableDataArray.length === 0) {
+              console.log(
+                "CLIENT: unstable_data is an empty array. Setting empty RAG sources."
+              );
+              sourcesToSet = []; // Explicitly set to empty array
             } else {
               console.warn(
-                "CLIENT: Items in message.metadata.unstable_data do not look like DocumentChunk objects.",
-                JSON.stringify(potentialSources[0], null, 2) // Log the first item for inspection
+                "CLIENT: unstable_data is an array, but its elements are not valid chunk objects or it's empty. Received:",
+                unstableDataArray
               );
             }
           } else {
             console.warn(
-              "CLIENT: message.metadata.unstable_data is missing or not an array."
+              "CLIENT: message.metadata.unstable_data is not an array as expected. Received:",
+              unstableDataArray
             );
-          }
-
-          if (sourcesToSet) {
-            console.log(
-              "CLIENT: Setting messageSources with data from message.metadata.unstable_data."
-            );
-            setMessageSources((prevMap) => {
-              const newMap = new Map(prevMap);
-              newMap.set(message.id, sourcesToSet!);
-              console.log(
-                `CLIENT: Updated messageSources map for message ${message.id}. New map size: ${newMap.size}`
-              );
-              return newMap;
-            });
-          } else {
-            console.warn(
-              "CLIENT: No processable sources found in message.metadata.unstable_data. Citations may not work."
-            );
-            // Optionally, set empty sources for this message if none are found
-            setMessageSources((prevMap) => {
-              const newMap = new Map(prevMap);
-              if (!newMap.has(message.id)) {
-                // Avoid overwriting if already set by a previous logic path (though unlikely now)
-                newMap.set(message.id, []);
-                console.log(
-                  `CLIENT: Set empty sources for message ${message.id} as fallback.`
-                );
-              }
-              return newMap;
-            });
           }
         } catch (e) {
           console.error(
-            "CLIENT: Error processing message object in onFinish:",
-            e
+            "CLIENT: Error during data parsing in onFinish:",
+            e,
+            "\nMessage object that caused error:",
+            JSON.stringify(message, null, 2)
           );
+          sourcesToSet = undefined;
+          groundingToSet = undefined;
         }
+
+        setMessageSources((prevMap) => {
+          const newMap = new Map(prevMap);
+          newMap.set(message.id, sourcesToSet || []);
+          console.log(
+            `CLIENT: State update for RAG sources for message ${message.id}:`,
+            sourcesToSet || []
+          );
+          return newMap;
+        });
+
+        setMessageGrounding((prevMap) => {
+          const newMap = new Map(prevMap);
+          if (newMap.has(message.id)) {
+            newMap.delete(message.id);
+            console.log(
+              `CLIENT: Cleared grounding metadata for message ${message.id} (RAG only test).`
+            );
+          }
+          return newMap;
+        });
       }
     },
-    // onError can be defined here if needed for logging/side-effects
   });
 
-  // EFFECT TO READ FROM LOCALSTORAGE AND UPDATE CHAT CONTEXT
-  // This effect will now also need to re-initialize or update the runtime if context changes.
-  // Ideally, useChatRuntime would provide a way to update its body reactively.
-  // For now, we rely on the initial body config. If useChatRuntime internally uses useState for body,
-  // it won't pick up changes to currentChatContextId/Name after initialization this way.
-  // Let's assume for now the initial setup is what we have, and reactive body updates are a future enhancement
-  // or handled differently by the library (e.g. if runtime.setBody() existed).
   useEffect(() => {
     const updateChatContextFromStorage = () => {
       const storedId = localStorage.getItem("chatContextId");
@@ -239,15 +191,6 @@ export default function ChatPage() {
 
       setCurrentChatContextName(newName);
       setCurrentChatContextId(newId);
-
-      // IMPORTANT: To make useChatRuntime reactive to body changes,
-      // you might need to pass these as props to a child component that then calls useChatRuntime,
-      // or use a key on AssistantRuntimeProvider to force re-initialization.
-      // The current setup will only use the initial values of currentChatContextId/Name.
-      // For this iteration, we'll update the state, but the runtime might not reflect it immediately
-      // without a mechanism to inform it or re-create it.
-      // A common pattern if the hook doesn't support dynamic body updates is to update a `key` prop on the Provider.
-      // runtime.updateChatBody({ documentId: newId, documentName: newName === "All Documents" ? undefined : newName }); // If such a method existed
     };
     updateChatContextFromStorage();
     const handleStorageChange = (event: StorageEvent) => {
@@ -259,12 +202,21 @@ export default function ChatPage() {
     return () => {
       window.removeEventListener("storage", handleStorageChange);
     };
-  }, []); // Empty dependency array means this runs once, subsequent changes to localStorage will update state but may not update runtime body
+  }, []);
+
+  const chatPageContextValue = useMemo(
+    () => ({
+      messageSources,
+      messageGrounding,
+      isSearchEnabled,
+      setIsSearchEnabled,
+    }),
+    [messageSources, messageGrounding, isSearchEnabled]
+  ); // Removed setIsSearchEnabled from deps as it's stable
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* Pass messageSources as a prop to make it available throughout the component tree */}
-      <ChatPageContext.Provider value={{ messageSources }}>
+      <ChatPageContext.Provider value={chatPageContextValue}>
         <div className="flex flex-col h-screen bg-background text-foreground">
           <ThreadPrimitive.Root
             className="box-border flex-1 bg-[#191a1a] overflow-hidden"
@@ -295,21 +247,23 @@ export default function ChatPage() {
   );
 }
 
-// Create a context to pass the messageSources Map down to child components
 interface ChatPageContextType {
   messageSources: MessageSourcesMap;
+  messageGrounding: MessageGroundingMap;
+  isSearchEnabled: boolean;
+  setIsSearchEnabled: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const ChatPageContext = React.createContext<ChatPageContextType>({
   messageSources: new Map(),
+  messageGrounding: new Map(),
+  isSearchEnabled: false,
+  setIsSearchEnabled: () => {},
 });
 
-// Hook to access the ChatPageContext
 function useChatPageContext() {
   return React.useContext(ChatPageContext);
 }
-
-// --- Perplexity Style Components ---
 
 const ThreadScrollToBottom: FC = () => {
   return (
@@ -325,7 +279,6 @@ const ThreadScrollToBottom: FC = () => {
   );
 };
 
-// ThreadWelcome now accepts no runtime props, uses context for ComposerPrimitives
 const ThreadWelcome: FC = () => {
   return (
     <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
@@ -333,42 +286,37 @@ const ThreadWelcome: FC = () => {
         <div className="flex w-full flex-grow flex-col items-center justify-center">
           <Image src="/logo2.png" alt="Wine Logo" width={200} height={100} />
         </div>
-        <ComposerPrimitive.Root className="focus-within:ring-border/20 w-full rounded-lg border border-foreground/20 bg-[#202222] px-2 shadow-sm outline-none transition-all duration-200 focus-within:ring-1 focus:outline-none">
-          <ComposerPrimitive.Input
-            rows={1}
-            autoFocus
-            placeholder="Ask anything..."
-            className="placeholder:text-muted-foreground max-h-40 w-full flex-grow resize-none border-none bg-transparent px-2 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
-            submitOnEnter
-          />
-          <div className="mx-1.5 flex gap-2">
-            <div className="flex-grow" />
-            <ComposerPrimitive.Send asChild>
-              <TooltipIconButton
-                className="my-2.5 size-8 rounded-full p-2 transition-opacity bg-[#8b2c2c] hover:bg-[#b54545] text-white"
-                tooltip="Send"
-                variant="default"
-                type="button"
-              >
-                <ArrowRightIcon />
-              </TooltipIconButton>
-            </ComposerPrimitive.Send>
-          </div>
-        </ComposerPrimitive.Root>
+        <Composer />
       </div>
     </div>
   );
 };
 
-// Composer now accepts no runtime props, uses context for ComposerPrimitives
 const Composer: FC = () => {
+  const { isSearchEnabled, setIsSearchEnabled } = useChatPageContext();
   return (
     <div className="bg-foreground/5 w-full rounded-full p-2">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-[#202222] px-2.5 shadow-sm transition-colors ease-in">
+        <TooltipIconButton
+          tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
+          variant="ghost"
+          className={cn(
+            "my-2.5 size-10 rounded-full p-2 transition-colors ease-in",
+            isSearchEnabled
+              ? "text-blue-500 hover:bg-blue-500/10"
+              : "text-gray-400 hover:text-white hover:bg-gray-500/10"
+          )}
+          onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+        >
+          <GlobeIcon className="!size-5" />
+        </TooltipIconButton>
+
         <ComposerPrimitive.Input
           rows={1}
           autoFocus
-          placeholder="Ask follow-up"
+          placeholder={
+            isSearchEnabled ? "Ask with web search..." : "Ask follow-up..."
+          }
           className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
           submitOnEnter
         />
@@ -420,7 +368,6 @@ const PerplexityUserMessage: FC = () => {
   );
 };
 
-// Custom Citation component with visible tooltip
 const Citation: FC<{
   num: number;
   source?: DocumentChunk;
@@ -432,7 +379,7 @@ const Citation: FC<{
     ? `${displaySource.name ? displaySource.name + ": " : ""}${
         displaySource.content
       }`
-    : "Source not available"; // Fallback text if source is undefined
+    : "Source not available";
 
   return (
     <span className="whitespace-nowrap relative inline-block">
@@ -449,8 +396,6 @@ const Citation: FC<{
           </span>
         </span>
       </a>
-
-      {/* Custom tooltip that's visible on hover */}
       {showTooltip && (
         <span
           className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden block"
@@ -490,12 +435,12 @@ const MarkdownWithCitations: FC<{
             parts.push(node.substring(lastIndex, match.index));
           }
           const citationNumbers = match[1]!
-            .substring(1, match[1]!.length - 1) // Remove brackets
+            .substring(1, match[1]!.length - 1)
             .split(",")
             .map((numStr) => parseInt(numStr.trim(), 10));
 
           citationNumbers.forEach((num, i) => {
-            const source = sources[num - 1]; // 1-indexed to 0-indexed
+            const source = sources[num - 1];
             parts.push(
               <Citation
                 key={`cite-idx${idx}-match${match!.index}-i${i}`}
@@ -516,7 +461,6 @@ const MarkdownWithCitations: FC<{
   };
 
   const customComponents = {
-    // Paragraphs with citation processing
     p: (props: any) => {
       const { children } = props;
       return (
@@ -525,8 +469,6 @@ const MarkdownWithCitations: FC<{
         </p>
       );
     },
-
-    // Headings
     h1: (props: any) => (
       <h1 className="text-2xl font-bold mb-4 mt-6 text-white">
         {props.children}
@@ -557,14 +499,10 @@ const MarkdownWithCitations: FC<{
         {props.children}
       </h6>
     ),
-
-    // Text formatting
     strong: (props: any) => (
       <strong className="font-bold text-white">{props.children}</strong>
     ),
     em: (props: any) => <em className="italic text-white">{props.children}</em>,
-
-    // Lists
     ul: (props: any) => (
       <ul className="list-disc list-inside mb-4 space-y-1 text-white pl-4">
         {props.children}
@@ -580,8 +518,6 @@ const MarkdownWithCitations: FC<{
         {processChildrenForCitations(React.Children.toArray(props.children))}
       </li>
     ),
-
-    // Code
     code: (props: any) => {
       const { node, inline, className, children, ...rest } = props;
       if (inline) {
@@ -608,15 +544,11 @@ const MarkdownWithCitations: FC<{
         {props.children}
       </pre>
     ),
-
-    // Blockquotes
     blockquote: (props: any) => (
       <blockquote className="border-l-4 border-blue-500 pl-4 py-2 mb-4 italic text-gray-300 bg-gray-800/50 rounded-r">
         {props.children}
       </blockquote>
     ),
-
-    // Tables
     table: (props: any) => (
       <div className="overflow-x-auto mb-4">
         <table className="min-w-full border border-gray-600 rounded-lg overflow-hidden">
@@ -643,8 +575,6 @@ const MarkdownWithCitations: FC<{
         {props.children}
       </td>
     ),
-
-    // Links
     a: (props: any) => (
       <a
         href={props.href}
@@ -655,8 +585,6 @@ const MarkdownWithCitations: FC<{
         {props.children}
       </a>
     ),
-
-    // Horizontal rule
     hr: () => <hr className="my-6 border-gray-600" />,
   };
 
@@ -671,7 +599,7 @@ const MarkdownWithCitations: FC<{
 
 const PerplexityAssistantMessage: FC = () => {
   const message = useMessage();
-  const { messageSources } = useChatPageContext();
+  const { messageSources, messageGrounding } = useChatPageContext();
 
   let messageText = "";
   if (message.content) {
@@ -685,20 +613,79 @@ const PerplexityAssistantMessage: FC = () => {
   }
 
   const sources = messageSources.get(message.id) || [];
+  const grounding = messageGrounding.get(message.id);
 
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
       <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
         <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
 
-        {/* Use the new MarkdownWithCitations component */}
+        {grounding?.searchEntryPoint?.renderedContent && (
+          <div
+            className="mb-4 p-3 border border-gray-600 rounded-lg bg-gray-800/50 overflow-x-auto"
+            dangerouslySetInnerHTML={{
+              __html: grounding.searchEntryPoint.renderedContent,
+            }}
+          />
+        )}
+
         {messageText && (
           <MarkdownWithCitations content={messageText} sources={sources} />
         )}
 
-        {/* Fallback or if content is not string, MessagePrimitive.Content might handle it */}
         {!messageText && (
           <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+        )}
+
+        {grounding?.webSearchQueries &&
+          grounding.webSearchQueries.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-700/50">
+              <h4 className="text-sm font-semibold text-gray-400 mb-2">
+                Related searches:
+              </h4>
+              <ul className="flex flex-wrap gap-2">
+                {grounding.webSearchQueries.map((query, index) => (
+                  <li key={`webquery-${index}`}>
+                    <a
+                      href={`https://www.google.com/search?q=${encodeURIComponent(
+                        query
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs bg-gray-700 hover:bg-gray-600 text-blue-300 px-2 py-1 rounded-full"
+                    >
+                      {query}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+        {grounding?.groundingChunks && grounding.groundingChunks.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-700/50">
+            <h4 className="text-sm font-semibold text-gray-400 mb-2">
+              Web sources:
+            </h4>
+            <ul className="space-y-1">
+              {grounding.groundingChunks.map(
+                (gChunk, index) =>
+                  gChunk.web?.uri && (
+                    <li key={`webchunk-${index}`} className="text-xs">
+                      <a
+                        href={gChunk.web.uri}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 hover:underline truncate block"
+                        title={gChunk.web.uri}
+                      >
+                        {gChunk.web.title || gChunk.web.uri}
+                      </a>
+                    </li>
+                  )
+              )}
+            </ul>
+          </div>
         )}
       </div>
       <AssistantActionBar />

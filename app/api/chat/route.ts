@@ -1,13 +1,12 @@
 import { OpenAI } from "openai";
-import Groq from "groq-sdk";
-import { Message, StreamData } from "ai";
+import { GoogleGenerativeAI, Content } from "@google/generative-ai";
+import { Message } from "ai";
 import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
-import { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GROQ_CHAT_MODEL = "llama-3.3-70b-versatile";
+const GEMINI_CHAT_MODEL = "gemini-1.5-flash-latest";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------
@@ -19,10 +18,8 @@ const openaiEmbeddings = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Initialize Groq client
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+// Initialize GoogleGenerativeAI client
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 // System prompt templates - these are correct for instructing the LLM
 const SYSTEM_PROMPT_TEMPLATE = `I'm your knowledgeable wine assistant, Waine, ready to help with your questions.
@@ -54,6 +51,7 @@ interface ChatRequestBody {
   messages: Message[];
   documentId?: string;
   documentName?: string;
+  enableSearch?: boolean; // Added for search toggle
 }
 
 // Define types for RPC parameters and document chunks
@@ -74,8 +72,12 @@ interface DocumentChunk {
 export async function POST(req: NextRequest) {
   console.log("API_CHAT: Received POST request"); // 1. Log request entry
   try {
-    const { messages, documentId, documentName }: ChatRequestBody =
-      await req.json();
+    const {
+      messages,
+      documentId,
+      documentName,
+      enableSearch,
+    }: ChatRequestBody = await req.json();
     console.log("API_CHAT: Parsed request body:", {
       documentId,
       documentName,
@@ -143,7 +145,11 @@ export async function POST(req: NextRequest) {
 
     console.log(
       "API_CHAT: Calling Supabase RPC 'match_document_chunks' with params:",
-      rpcParams
+      {
+        match_threshold: rpcParams.match_threshold,
+        match_count: rpcParams.match_count,
+        filter_document_id: rpcParams.filter_document_id,
+      }
     );
     const { data: chunks, error: matchError } = await supabase.rpc(
       "match_document_chunks",
@@ -193,118 +199,149 @@ export async function POST(req: NextRequest) {
     );
     console.log("API_CHAT: Prepared system prompt for LLM"); // 8. Log prompt prep
 
-    const groqMessages: ChatCompletionMessageParam[] = [
-      { role: "system", content: formattedSystemPrompt },
-      ...messages
-        .filter(
-          (msg): msg is Message & { role: "user" | "assistant" } =>
-            msg.role === "user" || msg.role === "assistant"
-        )
-        .map((msg) => {
-          let contentString = "";
-          if (typeof msg.content === "string") {
-            contentString = msg.content;
-          } else if (Array.isArray(msg.content)) {
-            // Explicitly cast to an array of known possible part types if necessary,
-            // or ensure Message type is specific enough.
-            // For now, casting to `any[]` then checking structure, which is not ideal but might bypass TS strictness here.
-            const contentArray = msg.content as any[];
-            for (const part of contentArray) {
-              if (
-                part &&
-                part.type === "text" &&
-                typeof part.text === "string"
-              ) {
-                contentString = part.text;
-                break; // Found the first text part
-              }
-            }
-            if (!contentString) {
-              console.warn(
-                `API_CHAT: Assistant message content for Groq is an array but no text part found. msg.id: ${msg.id}`
-              );
-            }
-          } else if (msg.content === null) {
-            console.warn(
-              `API_CHAT: Assistant message content for Groq is null. msg.id: ${msg.id}`
+    // Construct history for Gemini
+    const history: Content[] = messages
+      .filter(
+        (msg): msg is Message & { role: "user" | "assistant" } =>
+          msg.role === "user" || msg.role === "assistant"
+      )
+      .map((msg) => {
+        let text = "";
+        if (typeof msg.content === "string") {
+          text = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          // Ensure msg.content is treated as an array of parts with a text property
+          const textPart = (
+            msg.content as Array<{ type: string; text?: string }>
+          ).find(
+            (part) => part.type === "text" && typeof part.text === "string"
+          );
+          if (textPart && textPart.text) {
+            text = textPart.text;
+          }
+        }
+        return {
+          role: msg.role === "user" ? "user" : "model", // Gemini uses "model" for assistant
+          parts: [{ text }],
+        };
+      })
+      .slice(0, -1); // Remove the last user message, it will be the new prompt
+
+    // The last user message is the current prompt
+    const currentMessage = messages[messages.length - 1];
+    let currentPrompt = "";
+    if (typeof currentMessage.content === "string") {
+      currentPrompt = currentMessage.content;
+    } else if (Array.isArray(currentMessage.content)) {
+      const textPart = (
+        currentMessage.content as Array<{ type: string; text?: string }>
+      ).find((part) => part.type === "text" && typeof part.text === "string");
+      if (textPart && textPart.text) {
+        currentPrompt = textPart.text;
+      }
+    }
+
+    console.log("API_CHAT: Prepared messages for Gemini"); // 9. Log Gemini messages prep
+
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_CHAT_MODEL,
+      systemInstruction: formattedSystemPrompt,
+      // Tools are configured in startChat for Gemini 1.5 models with googleSearchRetrieval
+    });
+
+    const chat = model.startChat({
+      history: history,
+      tools: enableSearch ? [{ googleSearchRetrieval: {} }] : undefined,
+      generationConfig: {
+        // temperature: 0.9, // Example: Adjust temperature if needed
+        // topK: 1, // Example: Adjust topK if needed
+        // topP: 1, // Example: Adjust topP if needed
+        // maxOutputTokens: 2048, // Example: Adjust max output tokens if needed
+      },
+    });
+
+    const result = await chat.sendMessageStream(currentPrompt);
+
+    console.log("API_CHAT: Received Gemini stream response object"); // 10. Log Gemini response received
+
+    // Convert Gemini stream to Vercel AI SDK stream
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+
+        // streamDataPayload will now be the RAG chunks array directly for simplicity
+        const ragSourcesPayload: DocumentChunk[] = chunks || [];
+        let groundingMetadataToAttachLater: any | undefined = undefined; // We'll capture but not send with 2: for now
+
+        let initialDataSent = false;
+
+        for await (const geminiResponseChunk of result.stream) {
+          // Capture grounding metadata if available and search is enabled
+          if (
+            enableSearch &&
+            geminiResponseChunk.candidates &&
+            geminiResponseChunk.candidates[0] &&
+            geminiResponseChunk.candidates[0].groundingMetadata &&
+            !groundingMetadataToAttachLater // Only capture once
+          ) {
+            groundingMetadataToAttachLater =
+              geminiResponseChunk.candidates[0].groundingMetadata;
+            console.log(
+              "API_CHAT: Captured grounding metadata (will be processed differently/later for this test)."
             );
           }
 
-          return {
-            role: msg.role as "user" | "assistant",
-            content: contentString,
-          };
-        }),
-    ];
-    console.log("API_CHAT: Prepared messages for Groq"); // 9. Log Groq messages prep
-
-    const groqResponse = await groq.chat.completions.create({
-      model: GROQ_CHAT_MODEL,
-      stream: true,
-      messages: groqMessages,
-    });
-    console.log("API_CHAT: Received Groq stream response object"); // 10. Log Groq response received
-
-    // --- Manual Streaming with Vercel AI SDK Data Prefix (2:) ---
-    const encoder = new TextEncoder();
-    const streamData = new StreamData(); // Initialize StreamData from 'ai' package
-
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        console.log("API_CHAT: ReadableStream started (data prefix 2:)");
-        try {
-          // Send the chunks data using Vercel AI SDK prefix "2:"
-          // The Vercel AI SDK expects the JSON payload for prefix 2: to be an array.
-          const chunksToSend = chunks ?? [];
-          const initialDataChunk = `2:${JSON.stringify(chunksToSend)}\n`;
-          controller.enqueue(encoder.encode(initialDataChunk));
-          console.log(
-            "API_CHAT: Enqueued initial data with prefix 2:",
-            chunksToSend
-          );
-
-          for await (const chunk of groqResponse) {
-            const content = chunk.choices[0]?.delta?.content;
-            if (content) {
-              // Vercel AI SDK text chunks are prefixed with `0:`
-              // Ensure content is properly escaped for JSON string format.
-              const formattedTextChunk = `0:"${JSON.stringify(content).slice(
-                1,
-                -1
-              )}"\n`;
-              controller.enqueue(encoder.encode(formattedTextChunk));
-            }
+          // Send initial RAG sources payload before the first text chunk
+          if (!initialDataSent) {
+            // For this test, only send ragSourcesPayload directly
+            const initialDataMessage = `2:${JSON.stringify(
+              ragSourcesPayload
+            )}\n`;
+            controller.enqueue(encoder.encode(initialDataMessage));
+            initialDataSent = true;
+            console.log(
+              "API_CHAT: Enqueued initial RAG sources data (array form):",
+              ragSourcesPayload
+            );
+            // Note: groundingMetadataToAttachLater is captured but not sent in this simplified 2: prefix data
           }
-          console.log(
-            "API_CHAT: Finished iterating Groq stream (data prefix 2:)"
-          );
-          streamData.close(); // Close the StreamData instance when done
-          controller.close();
-          console.log(
-            "API_CHAT: ReadableStream controller closed (data prefix 2:)"
-          );
-        } catch (error) {
-          console.error(
-            "API_CHAT: Error in ReadableStream processing (data prefix 2:):",
-            error
-          );
-          controller.error(error);
+
+          // Send the text content of the chunk
+          const chunkText = geminiResponseChunk.text();
+          if (chunkText) {
+            const formattedTextChunk = `0:${JSON.stringify(chunkText)}\n`;
+            controller.enqueue(encoder.encode(formattedTextChunk));
+          }
         }
+
+        // Fallback: If the stream ended, no text was ever sent, but we have RAG data and it wasn't sent.
+        if (!initialDataSent && ragSourcesPayload.length > 0) {
+          const fallbackDataMessage = `2:${JSON.stringify(
+            ragSourcesPayload
+          )}\n`;
+          controller.enqueue(encoder.encode(fallbackDataMessage));
+          console.log(
+            "API_CHAT: Enqueued RAG data (array form) as a fallback:",
+            ragSourcesPayload
+          );
+        }
+
+        // TODO: If groundingMetadataToAttachLater was captured, consider how to send it.
+        // For Vercel AI SDK, multiple distinct `2:` prefixed objects become an array in `unstable_data`.
+        // Or, it might need to be a separate named stream if the SDK supports that explicitly.
+        // For now, this test focuses on getting RAG citations (via simple array in 2: prefix) working.
+
+        controller.close();
       },
     });
 
-    console.log(
-      "API_CHAT: Returning new Response object with manual stream (data prefix 2:)"
-    );
-    return new Response(readableStream, {
+    return new Response(stream, {
       headers: {
-        // The Content-Type for Vercel AI SDK streams.
         "Content-Type": "text/plain; charset=utf-8",
-        // This header signals to the Vercel AI SDK client that data is being streamed.
-        "X-Experimental-Stream-Data": "true",
+        "X-Experimental-Stream-Data": "true", // Crucial for Vercel AI SDK to process prefixed data
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("API_CHAT: Unhandled error in POST function:", error); // 17. Log any other unhandled error
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
