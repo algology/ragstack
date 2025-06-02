@@ -15,10 +15,6 @@ import {
   File,
   FileText,
   Trash2,
-  CheckCircle,
-  XCircle,
-  ListTree,
-  Settings,
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -39,25 +35,6 @@ export default function AdminPage() {
     UploadedDocument[]
   >([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [activeChatContext, setActiveChatContext] = useState<{
-    id: number | null;
-    name: string | null;
-  } | null>(null);
-
-  // Load active chat context from localStorage on mount
-  useEffect(() => {
-    const storedContextId = localStorage.getItem("chatContextId");
-    const storedContextName = localStorage.getItem("chatContextName");
-
-    if (storedContextId === "null" || !storedContextId) {
-      setActiveChatContext({ id: null, name: "All Documents" });
-    } else if (storedContextId && storedContextName) {
-      setActiveChatContext({
-        id: parseInt(storedContextId, 10),
-        name: storedContextName,
-      });
-    }
-  }, []);
 
   const fetchDocuments = useCallback(async () => {
     setFetchError(null);
@@ -186,10 +163,6 @@ export default function AdminPage() {
         setUploadedDocuments((prevDocs) =>
           prevDocs.filter((doc) => doc.id !== docId)
         );
-        // If the deleted document was the active context, reset to "All Documents"
-        if (activeChatContext && activeChatContext.id === docId) {
-          handleSetChatContext(null, "All Documents");
-        }
       } else {
         setUploadStatus(
           `Failed to delete ${docName}: ${result.error || "Unknown error"}`
@@ -204,24 +177,6 @@ export default function AdminPage() {
         }`
       );
     }
-  };
-
-  const handleSetChatContext = (
-    docId: number | null,
-    docName: string | null
-  ) => {
-    const newContextName = docName || "All Documents";
-    setActiveChatContext({ id: docId, name: newContextName });
-    if (docId === null) {
-      localStorage.setItem("chatContextId", "null");
-      localStorage.setItem("chatContextName", "All Documents");
-    } else {
-      localStorage.setItem("chatContextId", String(docId));
-      localStorage.setItem("chatContextName", newContextName);
-    }
-    setUploadStatus(`Chat context set to: ${newContextName}`);
-    // Give a visual feedback or scroll to the top, for example
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -286,116 +241,38 @@ export default function AdminPage() {
               ) : (
                 <ScrollArea className="h-[300px] pr-3">
                   <ul className="space-y-3">
-                    {/* Option to select "All Documents" */}
-                    <li
-                      key="all-documents-context"
-                      className={`flex items-center justify-between p-3 border rounded-md cursor-pointer transition-all
-                        ${
-                          activeChatContext?.id === null
-                            ? "bg-primary/10 border-primary shadow-md"
-                            : "hover:bg-muted/50"
-                        }`}
-                      onClick={() =>
-                        handleSetChatContext(null, "All Documents")
-                      }
-                      title="Set chat context to All Documents"
-                    >
-                      <div className="flex items-center space-x-3 min-w-0">
-                        <ListTree
-                          size={20}
-                          className={`flex-shrink-0 ${
-                            activeChatContext?.id === null
-                              ? "text-primary"
-                              : "text-muted-foreground"
-                          }`}
-                        />
-                        <span
-                          className={`text-sm font-medium truncate ${
-                            activeChatContext?.id === null ? "text-primary" : ""
-                          }`}
-                        >
-                          All Documents (Default)
-                        </span>
-                      </div>
-                      {activeChatContext?.id === null && (
-                        <CheckCircle
-                          size={20}
-                          className="text-primary flex-shrink-0"
-                        />
-                      )}
-                    </li>
-
                     {uploadedDocuments.map((doc) => (
                       <li
                         key={doc.id}
-                        className={`flex items-center justify-between p-3 border rounded-md cursor-pointer transition-all
-                          ${
-                            activeChatContext?.id === doc.id
-                              ? "bg-primary/10 border-primary shadow-md"
-                              : "hover:bg-muted/50"
-                          }`}
+                        className="flex items-center justify-between p-3 border rounded-md hover:bg-muted/50"
                         title={doc.name}
                       >
-                        <div className="flex items-center space-x-3 min-w-0 flex-1 mr-2">
+                        <div className="flex items-center space-x-3 min-w-0 flex-1 mr-3">
                           {doc.name.toLowerCase().endsWith(".pdf") ? (
                             <File
                               size={20}
-                              className={`flex-shrink-0 ${
-                                activeChatContext?.id === doc.id
-                                  ? "text-primary"
-                                  : "text-muted-foreground"
-                              }`}
+                              className="flex-shrink-0 text-muted-foreground"
                             />
                           ) : (
                             <FileText
                               size={20}
-                              className={`flex-shrink-0 ${
-                                activeChatContext?.id === doc.id
-                                  ? "text-primary"
-                                  : "text-muted-foreground"
-                              }`}
+                              className="flex-shrink-0 text-muted-foreground"
                             />
                           )}
                           <span
-                            className={`text-sm font-medium truncate ${
-                              activeChatContext?.id === doc.id
-                                ? "text-primary"
-                                : ""
-                            }`}
+                            className="text-sm font-medium"
                             title={doc.name}
                           >
                             {doc.name}
                           </span>
                         </div>
-                        <div className="flex items-center space-x-2 flex-shrink-0">
-                          <Button
-                            variant={
-                              activeChatContext?.id === doc.id
-                                ? "default"
-                                : "outline"
-                            }
-                            size="sm"
-                            onClick={() =>
-                              handleSetChatContext(doc.id, doc.name)
-                            }
-                            title={`Set chat context to ${doc.name}`}
-                            className="text-xs h-8whitespace-nowrap"
-                          >
-                            {activeChatContext?.id === doc.id ? (
-                              <>
-                                <CheckCircle size={14} className="mr-1.5" />{" "}
-                                Active
-                              </>
-                            ) : (
-                              "Set Active"
-                            )}
-                          </Button>
+                        <div className="flex items-center space-x-2 flex-shrink-0 min-w-fit">
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 p-0 hover:bg-destructive/10 group"
                             onClick={(e) => {
-                              e.stopPropagation(); // Prevent row click if on button
+                              e.stopPropagation();
                               handleDeleteDocument(doc.id, doc.name);
                             }}
                             title={`Delete ${doc.name}`}
@@ -410,16 +287,6 @@ export default function AdminPage() {
                     ))}
                   </ul>
                 </ScrollArea>
-              )}
-              {activeChatContext && (
-                <CardFooter>
-                  <p className="text-sm text-muted-foreground italic">
-                    Currently active chat context:{" "}
-                    <strong className="text-primary">
-                      {activeChatContext.name || "All Documents"}
-                    </strong>
-                  </p>
-                </CardFooter>
               )}
             </CardContent>
           </Card>
