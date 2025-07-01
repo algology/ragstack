@@ -324,7 +324,7 @@ const Composer: FC = () => {
     if (isSearchEnabled) {
       return hasMessages ? "Ask follow-up with web search..." : "Ask with web search...";
     }
-    return hasMessages ? "Ask follow-up..." : "Ask a question...";
+    return hasMessages ? "Ask follow-up.." : "Ask a question..";
   };
 
   return (
