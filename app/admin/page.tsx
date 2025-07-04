@@ -28,7 +28,7 @@ interface UploadedDocument {
 }
 
 export default function AdminPage() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const [uploadedDocuments, setUploadedDocuments] = useState<
@@ -57,10 +57,10 @@ export default function AdminPage() {
     fetchDocuments();
   }, [fetchDocuments]);
 
-  const handleFileSelected = useCallback((file: File) => {
-    setSelectedFile(file);
+  const handleFileSelected = useCallback((files: File[]) => {
+    setSelectedFiles(files);
     setUploadStatus("");
-    console.log("File selected for upload:", file.name);
+    console.log("Files selected for upload:", files.map(f => f.name));
   }, []);
 
   const extractTextFromFile = async (file: File): Promise<string> => {
@@ -88,54 +88,76 @@ export default function AdminPage() {
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) {
-      setUploadStatus("Please select a file first.");
+    if (selectedFiles.length === 0) {
+      setUploadStatus("Please select files first.");
       return;
     }
 
     setIsUploading(true);
-    setUploadStatus(`Processing ${selectedFile.name}...`);
+    setUploadStatus(`Processing ${selectedFiles.length} files...`);
 
-    let textContent = "";
-    const fileName = selectedFile.name;
+    let successCount = 0;
+    let failureCount = 0;
+    const newDocuments: UploadedDocument[] = [];
 
     try {
-      textContent = await extractTextFromFile(selectedFile);
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const fileName = file.name;
+        
+        setUploadStatus(`Processing file ${i + 1} of ${selectedFiles.length}: ${fileName}...`);
 
-      if (!textContent.trim()) {
-        throw new Error("Could not extract text from file.");
+        try {
+          const textContent = await extractTextFromFile(file);
+
+          if (!textContent.trim()) {
+            throw new Error("Could not extract text from file.");
+          }
+
+          setUploadStatus(`Uploading ${fileName} (${i + 1} of ${selectedFiles.length})...`);
+
+          const response = await fetch("/api/upload", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ fileName: fileName, textContent: textContent }),
+          });
+
+          const result = await response.json();
+
+          if (response.ok && result.success) {
+            successCount++;
+            newDocuments.push({ id: result.documentId, name: fileName });
+          } else {
+            failureCount++;
+            console.error(`Upload failed for ${fileName}:`, result);
+          }
+        } catch (error) {
+          failureCount++;
+          console.error(`Processing/Upload error for ${fileName}:`, error);
+        }
       }
 
-      setUploadStatus(`Uploading extracted text from ${fileName}...`);
+      // Update the document list with successful uploads
+      if (newDocuments.length > 0) {
+        setUploadedDocuments((prevDocs) => [...newDocuments, ...prevDocs]);
+      }
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ fileName: fileName, textContent: textContent }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        setUploadStatus(
-          `Successfully uploaded and processed ${fileName}. Document ID: ${result.documentId}`
-        );
-        // Add to the top of the list
-        setUploadedDocuments((prevDocs) => [
-          { id: result.documentId, name: fileName },
-          ...prevDocs,
-        ]);
-        setSelectedFile(null); // Clear selected file after successful upload
+      // Set final status
+      if (successCount === selectedFiles.length) {
+        setUploadStatus(`Successfully uploaded all ${successCount} files.`);
+      } else if (successCount > 0) {
+        setUploadStatus(`Uploaded ${successCount} of ${selectedFiles.length} files. ${failureCount} failed.`);
       } else {
-        setUploadStatus(`Upload failed: ${result.error || "Unknown error"}`);
-        console.error("Upload failed:", result);
+        setUploadStatus(`Failed to upload any files. ${failureCount} errors occurred.`);
       }
+
+      setSelectedFiles([]); // Clear selected files after upload attempt
     } catch (error) {
-      console.error("Processing/Upload error:", error);
+      console.error("Bulk upload error:", error);
       setUploadStatus(
-        `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+        `Error during bulk upload: ${error instanceof Error ? error.message : "Unknown error"}`
       );
     } finally {
       setIsUploading(false);
@@ -211,12 +233,38 @@ export default function AdminPage() {
                 accept=".txt,.pdf"
                 disabled={isUploading}
               />
+              
+              {selectedFiles.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">
+                    {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected:
+                  </p>
+                  <div className="max-h-32 overflow-y-auto">
+                    {selectedFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between text-sm p-2 bg-muted rounded">
+                        <span>{file.name}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+                          }}
+                          disabled={isUploading}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <Button
                 onClick={handleUpload}
-                disabled={!selectedFile || isUploading}
+                disabled={selectedFiles.length === 0 || isUploading}
                 className="w-full"
               >
-                {isUploading ? "Processing & Uploading..." : "Upload File"}
+                {isUploading ? "Processing & Uploading..." : `Upload ${selectedFiles.length} File${selectedFiles.length === 1 ? '' : 's'}`}
               </Button>
             </CardContent>
             {uploadStatus && (
