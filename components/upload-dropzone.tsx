@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { UploadCloud } from "lucide-react";
 
 interface UploadDropzoneProps {
-  onFileSelect: (file: File) => void;
+  onFileSelect: (files: File[]) => void;
   className?: string;
   accept?: string;
   disabled?: boolean;
@@ -47,24 +47,23 @@ export function UploadDropzone({
 
       const files = e.dataTransfer.files;
       if (files && files.length > 0) {
-        // Check if file type is accepted (basic check)
-        const file = files[0];
-        if (accept) {
-          const acceptedTypes = accept.split(",").map((t) => t.trim());
-          const fileExtension =
-            "." + (file.name.split(".").pop()?.toLowerCase() ?? "");
-          if (
-            !acceptedTypes.includes(file.type) &&
-            !acceptedTypes.includes(fileExtension)
-          ) {
-            // Optionally show an error message to the user
-            console.warn(
-              `File type ${file.type} or extension ${fileExtension} not accepted.`
-            );
-            return;
+        // Convert FileList to array and filter by accepted types
+        const fileArray = Array.from(files);
+        const validFiles = fileArray.filter(file => {
+          if (accept) {
+            const acceptedTypes = accept.split(",").map((t) => t.trim());
+            const fileExtension =
+              "." + (file.name.split(".").pop()?.toLowerCase() ?? "");
+            return acceptedTypes.includes(file.type) || acceptedTypes.includes(fileExtension);
           }
+          return true;
+        });
+        
+        if (validFiles.length > 0) {
+          onFileSelect(validFiles);
+        } else {
+          console.warn("No valid files found in dropped selection");
         }
-        onFileSelect(file);
       }
     },
     [onFileSelect, accept, disabled]
@@ -79,7 +78,7 @@ export function UploadDropzone({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      onFileSelect(files[0]);
+      onFileSelect(Array.from(files));
     }
     // Reset input value to allow selecting the same file again
     if (e.target) {
@@ -115,6 +114,7 @@ export function UploadDropzone({
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         style={{ display: "none" }}
         accept={accept}
         onChange={handleInputChange}
@@ -135,9 +135,8 @@ export function UploadDropzone({
           disabled ? "text-muted-foreground" : "text-foreground"
         )}
       >
-        <p className="font-semibold">Click to upload, or drag file here</p>
-        <p className="text-xs text-muted-foreground">Supports: TXT, PDF</p>{" "}
-        {/* Update this if accept changes */}
+        <p className="font-semibold">Click to upload, or drag files here</p>
+        <p className="text-xs text-muted-foreground">Supports: TXT, PDF</p>
       </div>
     </div>
   );
