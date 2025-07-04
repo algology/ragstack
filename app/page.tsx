@@ -16,6 +16,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useMessage,
+  useThread,
   type ThreadMessage,
 } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
@@ -313,6 +314,19 @@ const ThreadWelcome: FC = () => {
 
 const Composer: FC = () => {
   const { isSearchEnabled, setIsSearchEnabled } = useChatPageContext();
+  const thread = useThread();
+  
+  // Check if there are any messages in the conversation
+  const hasMessages = thread.messages.length > 0;
+  
+  // Determine placeholder text based on search state and whether it's the first message
+  const getPlaceholderText = () => {
+    if (isSearchEnabled) {
+      return hasMessages ? "Ask follow-up with web search..." : "Ask with web search...";
+    }
+    return hasMessages ? "Ask follow-up.." : "Ask a question..";
+  };
+
   return (
     <div className="bg-foreground/5 w-full rounded-full p-2">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-[#202222] px-2.5 shadow-sm transition-colors ease-in">
@@ -333,9 +347,7 @@ const Composer: FC = () => {
         <ComposerPrimitive.Input
           rows={1}
           autoFocus
-          placeholder={
-            isSearchEnabled ? "Ask with web search..." : "Ask follow-up..."
-          }
+          placeholder={getPlaceholderText()}
           className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
           submitOnEnter
         />
