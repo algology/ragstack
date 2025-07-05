@@ -3,6 +3,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { OpenAI } from "openai";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { PostgrestError } from "@supabase/postgrest-js";
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
@@ -23,8 +25,37 @@ export async function POST(req: NextRequest) {
   // const userId = user.id;
 
   try {
-    // Expect JSON body instead of FormData
-    const { fileName, textContent } = await req.json();
+    // Accept both JSON (text content) and FormData (PDF files)
+    const contentType = req.headers.get('content-type');
+    let fileName: string;
+    let textContent: string;
+    let pdfBuffer: Buffer | null = null;
+
+    if (contentType?.includes('application/json')) {
+      // Existing text-only upload
+      const body = await req.json();
+      fileName = body.fileName;
+      textContent = body.textContent;
+    } else {
+      // New PDF file upload
+      const formData = await req.formData();
+      const file = formData.get('file') as File;
+      
+      if (!file) {
+        return NextResponse.json(
+          { error: "No file provided" },
+          { status: 400 }
+        );
+      }
+
+      fileName = file.name;
+      textContent = formData.get('textContent') as string;
+      
+      // Store PDF file data
+      if (file.type === 'application/pdf') {
+        pdfBuffer = Buffer.from(await file.arrayBuffer());
+      }
+    }
 
     if (!fileName || typeof fileName !== "string") {
       return NextResponse.json(
@@ -88,11 +119,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Store in Supabase
+    // 3. Store PDF file if provided
+    let filePath: string | null = null;
+    if (pdfBuffer) {
+      // Create uploads directory if it doesn't exist
+      const uploadsDir = join(process.cwd(), 'uploads');
+      try {
+        await mkdir(uploadsDir, { recursive: true });
+      } catch (error) {
+        // Directory might already exist, that's ok
+      }
+      
+      // Generate unique filename
+      const timestamp = Date.now();
+      const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const uniqueFileName = `${timestamp}_${safeFileName}`;
+      filePath = join(uploadsDir, uniqueFileName);
+      
+      // Save PDF file
+      await writeFile(filePath, pdfBuffer);
+      console.log(`Saved PDF file to: ${filePath}`);
+    }
+
+    // 4. Store in Supabase
     const { data: docData, error: docError } = await supabase
       .from("documents")
       // TODO: Add user_id when inserting
-      .insert({ name: fileName /*, user_id: userId */ })
+      .insert({ 
+        name: fileName,
+        file_path: filePath ? `uploads/${join(filePath).split('/').pop()}` : null
+        /*, user_id: userId */ 
+      })
       .select()
       .single();
 

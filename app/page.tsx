@@ -7,6 +7,16 @@ import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// PDF Viewer imports
+import { PDFViewerProvider, usePDFViewer } from "@/contexts/pdf-viewer-context";
+import dynamic from "next/dynamic";
+
+// Dynamically import PDFViewer to avoid SSR issues
+const PDFViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => ({ default: mod.PDFViewer })), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full">Loading PDF viewer...</div>
+});
+
 // Assistant UI Components
 import {
   AssistantRuntimeProvider,
@@ -29,6 +39,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
+  FileText,
   GlobeIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -37,7 +48,8 @@ import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 
 interface DocumentChunk {
-  id?: string;
+  id?: string; // Chunk ID
+  document_id?: number; // Document ID
   content: string;
   name?: string;
 }
@@ -52,6 +64,7 @@ interface BlendedSource {
   content: string;
   name: string;
   uri?: string; // For web sources
+  documentId?: string; // For RAG sources
 }
 
 interface GroundingMetadata {
@@ -228,37 +241,66 @@ export default function ChatPage() {
   ); // Removed setIsSearchEnabled from deps as it's stable
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ChatPageContext.Provider value={chatPageContextValue}>
-        <div className="flex flex-col h-screen bg-background text-foreground">
-          <ThreadPrimitive.Root
-            className="box-border flex-1 bg-[#191a1a] overflow-hidden"
-            style={{ ["--thread-max-width" as string]: "42rem" }}
-          >
-            <ThreadPrimitive.Empty>
-              <ThreadWelcome />
-            </ThreadPrimitive.Empty>
-            <ThreadPrimitive.If empty={false}>
-              <ThreadPrimitive.Viewport className="flex h-full flex-col items-center overflow-y-scroll scroll-smooth bg-inherit px-4 pt-8">
-                <ThreadPrimitive.Messages
-                  components={{
-                    UserMessage: PerplexityUserMessage,
-                    AssistantMessage: PerplexityAssistantMessage,
-                  }}
-                />
-                <div className="min-h-8 flex-grow" />
-                <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
-                  <ThreadScrollToBottom />
-                  <Composer />
-                </div>
-              </ThreadPrimitive.Viewport>
-            </ThreadPrimitive.If>
-          </ThreadPrimitive.Root>
-        </div>
-      </ChatPageContext.Provider>
-    </AssistantRuntimeProvider>
+    <PDFViewerProvider>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <ChatPageContext.Provider value={chatPageContextValue}>
+          <ChatPageLayout />
+        </ChatPageContext.Provider>
+      </AssistantRuntimeProvider>
+    </PDFViewerProvider>
   );
 }
+
+// Split-screen layout component
+const ChatPageLayout: FC = () => {
+  const { state } = usePDFViewer();
+
+  return (
+    <div className="flex h-screen bg-background text-foreground">
+      {/* Main Chat Area */}
+      <div 
+        className={cn(
+          "flex flex-col transition-all duration-300 ease-in-out",
+          state.isOpen ? "w-[60%]" : "w-full"
+        )}
+      >
+        <ThreadPrimitive.Root
+          className="box-border flex-1 bg-[#191a1a] overflow-hidden"
+          style={{ ["--thread-max-width" as string]: "42rem" }}
+        >
+          <ThreadPrimitive.Empty>
+            <ThreadWelcome />
+          </ThreadPrimitive.Empty>
+          <ThreadPrimitive.If empty={false}>
+            <ThreadPrimitive.Viewport className="flex h-full flex-col items-center overflow-y-scroll scroll-smooth bg-inherit px-4 pt-8">
+              <ThreadPrimitive.Messages
+                components={{
+                  UserMessage: PerplexityUserMessage,
+                  AssistantMessage: PerplexityAssistantMessage,
+                }}
+              />
+              <div className="min-h-8 flex-grow" />
+              <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
+                <ThreadScrollToBottom />
+                <Composer />
+              </div>
+            </ThreadPrimitive.Viewport>
+          </ThreadPrimitive.If>
+        </ThreadPrimitive.Root>
+      </div>
+
+      {/* PDF Viewer Panel */}
+      <div 
+        className={cn(
+          "transition-all duration-300 ease-in-out overflow-hidden",
+          state.isOpen ? "w-[40%]" : "w-0"
+        )}
+      >
+        <PDFViewer />
+      </div>
+    </div>
+  );
+};
 
 interface ChatPageContextType {
   messageSources: MessageSourcesMap;
@@ -404,15 +446,34 @@ const Citation: FC<{
   source?: BlendedSource;
 }> = ({ num, source }) => {
   const [showTooltip, setShowTooltip] = useState(false);
+  const { openPDFViewer } = usePDFViewer();
 
   const isWebSource = source?.type === "web";
+  const isDocumentSource = source?.type === "rag";
   const tooltipText = source
     ? `${source.name}${source.content ? ": " + source.content : ""}`
     : "Source not available";
 
   const handleClick = () => {
+    console.log("Citation clicked:", { source, isWebSource, isDocumentSource });
     if (isWebSource && source?.uri) {
       window.open(source.uri, "_blank", "noopener,noreferrer");
+    } else if (isDocumentSource && source?.documentId && source?.name) {
+      // Parse document ID as number - for now we'll use a simple approach
+      const docId = parseInt(source.documentId);
+      console.log("Opening PDF viewer with docId:", docId, "name:", source.name);
+      if (!isNaN(docId)) {
+        openPDFViewer(docId, source.name);
+      } else {
+        console.error("Invalid document ID:", source.documentId);
+      }
+    } else {
+      console.log("Click conditions not met:", {
+        isDocumentSource,
+        documentId: source?.documentId,
+        name: source?.name,
+        fullSource: source
+      });
     }
   };
 
@@ -421,6 +482,8 @@ const Citation: FC<{
       <a
         className={`mr-[2px] citation ml-xs inline cursor-pointer ${
           isWebSource ? "hover:text-blue-300" : ""
+        } ${
+          isDocumentSource ? "hover:text-green-300" : ""
         }`}
         data-state={showTooltip ? "open" : "closed"}
         aria-label={tooltipText}
@@ -433,6 +496,8 @@ const Citation: FC<{
             className={`min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums py-[0.1875rem] px-[0.3rem] border ${
               isWebSource
                 ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-700"
+                : isDocumentSource
+                ? "bg-green-600 border-green-500 text-white hover:bg-green-700"
                 : "hover:bg-super dark:hover:bg-superDark dark:hover:text-backgroundDark hover:text-white border-borderMain/50 dark:border-borderMainDark/50 bg-offsetPlus dark:bg-offsetPlusDark"
             }`}
           >
@@ -450,15 +515,24 @@ const Citation: FC<{
               className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
                 isWebSource
                   ? "bg-blue-600 text-white"
+                  : isDocumentSource
+                  ? "bg-green-600 text-white"
                   : "bg-gray-600 text-white"
               }`}
             >
               {isWebSource ? "WEB" : "DOC"}
             </span>
-            <span className="font-semibold text-blue-300 truncate flex-1">
+            <span className={`font-semibold truncate flex-1 ${
+              isWebSource ? "text-blue-300" : isDocumentSource ? "text-green-300" : "text-blue-300"
+            }`}>
               {source?.name}
             </span>
           </div>
+          {isDocumentSource && (
+            <div className="text-green-400 text-xs mb-1">
+              Click to view document
+            </div>
+          )}
           {isWebSource && source?.uri && (
             <div className="text-blue-400 text-xs mb-1 truncate">
               {source.uri}
@@ -658,6 +732,7 @@ const MarkdownWithCitations: FC<{
 const PerplexityAssistantMessage: FC = () => {
   const message = useMessage();
   const { messageSources, messageGrounding } = useChatPageContext();
+  const { openPDFViewer } = usePDFViewer();
 
   let messageText = "";
   if (message.content) {
@@ -673,15 +748,22 @@ const PerplexityAssistantMessage: FC = () => {
   const ragSources = messageSources.get(message.id) || [];
   const grounding = messageGrounding.get(message.id);
 
+  console.log("RAG Sources for message:", message.id, ragSources);
+
   // Create blended sources combining RAG and web sources
   const blendedSources: BlendedSource[] = [
     // Add RAG sources first
     ...ragSources.map(
-      (source): BlendedSource => ({
-        type: "rag",
-        content: source.content,
-        name: source.name || "Document",
-      })
+      (source): BlendedSource => {
+        const blendedSource = {
+          type: "rag" as const,
+          content: source.content,
+          name: source.name || "Document",
+          documentId: source.document_id?.toString(), // Pass through the document ID
+        };
+        console.log("Creating blended source:", blendedSource);
+        return blendedSource;
+      }
     ),
     // Add web sources from grounding metadata
     ...(grounding?.groundingChunks?.map(
@@ -750,11 +832,31 @@ const PerplexityAssistantMessage: FC = () => {
                       </span>
                     </a>
                   ) : (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-600/50 bg-gray-800/30">
+                    <div 
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-600/50 bg-gray-800/30 hover:bg-gray-700/50 transition-colors duration-200 cursor-pointer"
+                      onClick={() => {
+                        console.log("Source card clicked:", source);
+                        if (source.type === "rag" && source.documentId && source.name) {
+                          const docId = parseInt(source.documentId);
+                          console.log("Opening PDF viewer from source card - docId:", docId, "name:", source.name);
+                          if (!isNaN(docId)) {
+                            openPDFViewer(docId, source.name);
+                          } else {
+                            console.error("Invalid document ID from source card:", source.documentId);
+                          }
+                        } else {
+                          console.log("Source card click conditions not met:", {
+                            type: source.type,
+                            documentId: source.documentId,
+                            name: source.name
+                          });
+                        }
+                      }}
+                    >
                       <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full bg-gray-600/20 flex items-center justify-center">
+                        <div className="w-4 h-4 rounded-full bg-green-600/20 flex items-center justify-center">
                           <svg
-                            className="w-2.5 h-2.5 text-gray-400"
+                            className="w-2.5 h-2.5 text-green-400"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -766,11 +868,11 @@ const PerplexityAssistantMessage: FC = () => {
                             <polyline points="10,9 9,9 8,9" />
                           </svg>
                         </div>
-                        <span className="text-xs font-medium text-gray-300">
+                        <span className="text-xs font-medium text-gray-300 group-hover:text-white transition-colors">
                           [{index + 1}]
                         </span>
                       </div>
-                      <span className="text-xs text-gray-400 truncate max-w-[200px]">
+                      <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">
                         {source.name.replace(".pdf", "")}
                       </span>
                     </div>

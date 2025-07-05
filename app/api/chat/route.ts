@@ -69,7 +69,8 @@ interface RpcParams {
 }
 
 interface DocumentChunk {
-  id: number; // Assuming ID is a number; or string if more appropriate
+  id: number; // Chunk ID
+  document_id: number; // Document ID  
   content: string;
   name: string; // Document name, expected by the client
   // similarity: number; // This also comes from the DB, can be added if needed downstream
