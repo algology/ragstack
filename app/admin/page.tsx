@@ -66,7 +66,7 @@ export default function AdminPage() {
   const extractTextFromFile = async (file: File): Promise<string> => {
     if (file.type === "application/pdf") {
       const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+              pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
@@ -116,22 +116,45 @@ export default function AdminPage() {
 
           setUploadStatus(`Uploading ${fileName} (${i + 1} of ${selectedFiles.length})...`);
 
-          const response = await fetch("/api/upload", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ fileName: fileName, textContent: textContent }),
-          });
+          // Create FormData for PDF files to send both file and text content
+          if (file.type === "application/pdf") {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("textContent", textContent);
 
-          const result = await response.json();
+            const response = await fetch("/api/upload", {
+              method: "POST",
+              body: formData, // Send as FormData for PDF files
+            });
 
-          if (response.ok && result.success) {
-            successCount++;
-            newDocuments.push({ id: result.documentId, name: fileName });
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+              successCount++;
+              newDocuments.push({ id: result.documentId, name: fileName });
+            } else {
+              failureCount++;
+              console.error(`Upload failed for ${fileName}:`, result);
+            }
           } else {
-            failureCount++;
-            console.error(`Upload failed for ${fileName}:`, result);
+            // For text files, continue with JSON upload
+            const response = await fetch("/api/upload", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ fileName: fileName, textContent: textContent }),
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+              successCount++;
+              newDocuments.push({ id: result.documentId, name: fileName });
+            } else {
+              failureCount++;
+              console.error(`Upload failed for ${fileName}:`, result);
+            }
           }
         } catch (error) {
           failureCount++;
