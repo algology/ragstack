@@ -363,14 +363,25 @@ export async function POST(req: NextRequest) {
 
     console.log("API_CHAT: Creating proper AI SDK stream response");
 
+    // Deduplicate chunks by document for display (but keep all chunks for LLM context)
+    const uniqueDocuments = new Map<number, DocumentChunk>();
+    chunks?.forEach((chunk) => {
+      if (!uniqueDocuments.has(chunk.document_id)) {
+        uniqueDocuments.set(chunk.document_id, chunk);
+      }
+    });
+    const deduplicatedSources = Array.from(uniqueDocuments.values());
+    console.log(`API_CHAT: Deduplicated sources from ${chunks?.length || 0} chunks to ${deduplicatedSources.length} unique documents`);
+
     // Create a proper AI SDK compatible stream
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
 
         try {
-          // Send initial data with RAG sources
-          const initialPayload = { ragSources: chunks || [] };
+
+          // Send initial data with deduplicated RAG sources
+          const initialPayload = { ragSources: deduplicatedSources };
           controller.enqueue(
             encoder.encode(
               `2:[${JSON.stringify(JSON.stringify(initialPayload))}]\n`
@@ -404,7 +415,7 @@ export async function POST(req: NextRequest) {
           // Send final payload with both RAG sources and grounding metadata
           if (groundingMetadata) {
             const finalPayload = {
-              ragSources: chunks || [],
+              ragSources: deduplicatedSources,
               groundingMetadata: groundingMetadata,
             };
             controller.enqueue(
