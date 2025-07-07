@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
-import { readFile } from "fs/promises";
-import { join } from "path";
 
 export async function GET(
   request: NextRequest,
@@ -41,11 +39,18 @@ export async function GET(
     if (document.file_path) {
       console.log("PDF Content API: Attempting to serve PDF file:", document.file_path);
       try {
-        const fullPath = join(process.cwd(), document.file_path);
-        console.log("PDF Content API: Full file path:", fullPath);
-        const fileBuffer = await readFile(fullPath);
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('pdfs')
+          .download(document.file_path);
         
-        console.log("PDF Content API: Successfully read PDF file, size:", fileBuffer.length);
+        if (downloadError) {
+          console.error("PDF Content API: Error downloading PDF from Supabase Storage:", downloadError);
+          throw downloadError;
+        }
+        
+        const fileBuffer = Buffer.from(await fileData.arrayBuffer());
+        console.log("PDF Content API: Successfully downloaded PDF file, size:", fileBuffer.length);
+        
         return new NextResponse(fileBuffer, {
           headers: {
             'Content-Type': 'application/pdf',
