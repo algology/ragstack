@@ -46,6 +46,7 @@ import {
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { FlowingPrompts } from "@/components/flowing-prompts";
 
 interface DocumentChunk {
   id?: string; // Chunk ID
@@ -254,38 +255,57 @@ export default function ChatPage() {
 // Split-screen layout component
 const ChatPageLayout: FC = () => {
   const { state } = usePDFViewer();
+  const thread = useThread();
+  
+  // Check if we should show the prompt sidebar (only when chat is empty)
+  const showPromptSidebar = thread.messages.length === 0;
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* Main Chat Area */}
+      {/* Main Chat Area with Thread Context */}
       <div 
         className={cn(
           "flex flex-col transition-all duration-300 ease-in-out",
-          state.isOpen ? "w-[60%]" : "w-full"
+          showPromptSidebar && !state.isOpen ? "flex-1" : // Full remaining width when sidebar is shown and PDF closed
+          showPromptSidebar && state.isOpen ? "w-[calc(100%-40%-320px)]" : // Reduced width when both sidebar and PDF are open
+          !showPromptSidebar && state.isOpen ? "w-[60%]" : // Normal PDF layout when no sidebar
+          "w-full" // Full width when no sidebar and no PDF
         )}
       >
         <ThreadPrimitive.Root
           className="box-border flex-1 bg-[#191a1a] overflow-hidden"
           style={{ ["--thread-max-width" as string]: "42rem" }}
         >
-          <ThreadPrimitive.Empty>
-            <ThreadWelcome />
-          </ThreadPrimitive.Empty>
-          <ThreadPrimitive.If empty={false}>
-            <ThreadPrimitive.Viewport className="flex h-full flex-col items-center overflow-y-scroll scroll-smooth bg-inherit px-4 pt-8">
-              <ThreadPrimitive.Messages
-                components={{
-                  UserMessage: PerplexityUserMessage,
-                  AssistantMessage: PerplexityAssistantMessage,
-                }}
-              />
-              <div className="min-h-8 flex-grow" />
-              <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
-                <ThreadScrollToBottom />
-                <Composer />
+          <div className="flex h-full">
+            {/* Prompt Sidebar - inside thread context, only visible when chat is empty */}
+            {showPromptSidebar && (
+              <div className="w-80 flex-shrink-0 pl-4">
+                <FlowingPrompts />
               </div>
-            </ThreadPrimitive.Viewport>
-          </ThreadPrimitive.If>
+            )}
+
+            {/* Chat Content Area */}
+            <div className="flex-1 flex flex-col">
+              <ThreadPrimitive.Empty>
+                <ThreadWelcome />
+              </ThreadPrimitive.Empty>
+              <ThreadPrimitive.If empty={false}>
+                <ThreadPrimitive.Viewport className="flex h-full flex-col items-center overflow-y-scroll scroll-smooth bg-inherit px-4 pt-8">
+                  <ThreadPrimitive.Messages
+                    components={{
+                      UserMessage: PerplexityUserMessage,
+                      AssistantMessage: PerplexityAssistantMessage,
+                    }}
+                  />
+                  <div className="min-h-8 flex-grow" />
+                  <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
+                    <ThreadScrollToBottom />
+                    <Composer />
+                  </div>
+                </ThreadPrimitive.Viewport>
+              </ThreadPrimitive.If>
+            </div>
+          </div>
         </ThreadPrimitive.Root>
       </div>
 
