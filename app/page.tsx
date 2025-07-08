@@ -510,7 +510,7 @@ const Citation: FC<{
           className="absolute left-0 bottom-full mb-2 p-3 bg-gray-800 text-white text-xs rounded-md shadow-lg z-50 w-64 overflow-hidden block"
           style={{ minWidth: "250px" }}
         >
-          <div className="flex items-center gap-2 mb-1">
+          <span className="flex items-center gap-2 mb-1">
             <span
               className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
                 isWebSource
@@ -527,16 +527,16 @@ const Citation: FC<{
             }`}>
               {source?.name}
             </span>
-          </div>
+          </span>
           {isDocumentSource && (
-            <div className="text-green-400 text-xs mb-1">
+            <span className="text-green-400 text-xs mb-1 block">
               Click to view document
-            </div>
+            </span>
           )}
           {isWebSource && source?.uri && (
-            <div className="text-blue-400 text-xs mb-1 truncate">
+            <span className="text-blue-400 text-xs mb-1 truncate block">
               {source.uri}
-            </div>
+            </span>
           )}
           <span className="break-words whitespace-normal overflow-y-auto max-h-40 block">
             {source?.content || "Source details not available."}
@@ -572,14 +572,20 @@ const MarkdownWithCitations: FC<{
             .map((numStr) => parseInt(numStr.trim(), 10));
 
           citationNumbers.forEach((num, i) => {
-            const source = sources[num - 1];
-            parts.push(
-              <Citation
-                key={`cite-idx${idx}-match${match!.index}-i${i}`}
-                num={num}
-                source={source}
-              />
-            );
+            // Only render citations that exist in our sources array
+            if (num > 0 && num <= sources.length) {
+              const source = sources[num - 1];
+              if (source) {
+                parts.push(
+                  <Citation
+                    key={`cite-idx${idx}-match${match!.index}-i${i}`}
+                    num={num}
+                    source={source}
+                  />
+                );
+              }
+            }
+            // Skip rendering invalid citation numbers entirely instead of showing grayed out ones
           });
           lastIndex = citationRegex.lastIndex;
         }
@@ -776,9 +782,29 @@ const PerplexityAssistantMessage: FC = () => {
     ) || []),
   ];
 
-  // Only show sources if there are any and they were actually cited
-  const shouldShowSources =
-    blendedSources.length > 0 && messageText.includes("[");
+  // Extract which citation numbers were actually used in the text
+  const getActuallyCitedSources = (text: string, sources: BlendedSource[]) => {
+    const citedNumbers = new Set<number>();
+    const citationRegex = /\[(\d+(?:,\s*\d+)*)\]/g;
+    let match;
+    
+    while ((match = citationRegex.exec(text)) !== null) {
+      const numbers = match[1].split(',').map(num => parseInt(num.trim(), 10));
+      numbers.forEach(num => {
+        if (num > 0 && num <= sources.length) {
+          citedNumbers.add(num);
+        }
+      });
+    }
+    
+    return Array.from(citedNumbers)
+      .sort((a, b) => a - b)
+      .map(num => ({ source: sources[num - 1], originalIndex: num }))
+      .filter(item => item.source);
+  };
+
+  const actuallyCitedSources = getActuallyCitedSources(messageText, blendedSources);
+  const shouldShowSources = actuallyCitedSources.length > 0;
 
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
@@ -799,8 +825,8 @@ const PerplexityAssistantMessage: FC = () => {
         {shouldShowSources && (
           <div className="mt-6 pt-4 border-t border-gray-700/30">
             <div className="flex flex-wrap gap-3">
-              {blendedSources.map((source, index) => (
-                <div key={`source-${index}`} className="group relative">
+              {actuallyCitedSources.map(({ source, originalIndex }, displayIndex) => (
+                <div key={`source-${displayIndex}`} className="group relative">
                   {source.type === "web" && source.uri ? (
                     <a
                       href={source.uri}
@@ -824,7 +850,7 @@ const PerplexityAssistantMessage: FC = () => {
                           </svg>
                         </div>
                         <span className="text-xs font-medium text-gray-300 group-hover:text-white transition-colors">
-                          [{index + 1}]
+                          [{originalIndex}]
                         </span>
                       </div>
                       <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">
@@ -869,7 +895,7 @@ const PerplexityAssistantMessage: FC = () => {
                           </svg>
                         </div>
                         <span className="text-xs font-medium text-gray-300 group-hover:text-white transition-colors">
-                          [{index + 1}]
+                          [{originalIndex}]
                         </span>
                       </div>
                       <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">

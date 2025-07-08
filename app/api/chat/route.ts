@@ -262,16 +262,25 @@ export async function POST(req: NextRequest) {
       console.log("API_CHAT: Skipping RAG search for conversational query");
     }
 
+    // Deduplicate chunks by document FIRST, then number them for the AI
+    const uniqueDocuments = new Map<number, DocumentChunk>();
+    chunks?.forEach((chunk) => {
+      if (!uniqueDocuments.has(chunk.document_id)) {
+        uniqueDocuments.set(chunk.document_id, chunk);
+      }
+    });
+    const deduplicatedSources = Array.from(uniqueDocuments.values());
+    
     const numberedContext =
-      chunks && chunks.length > 0
-        ? chunks
+      deduplicatedSources && deduplicatedSources.length > 0
+        ? deduplicatedSources
             .map(
               (chunk: DocumentChunk, index: number) =>
                 `[${index + 1}] ${chunk.content}`
             )
             .join("\n\n---\n\n")
         : "No relevant context found.";
-    console.log("API_CHAT: Prepared numbered context for LLM"); // 7. Log context prep
+    console.log(`API_CHAT: Prepared numbered context for LLM with ${deduplicatedSources.length} deduplicated sources`); // 7. Log context prep
 
     let promptTemplate = SYSTEM_PROMPT_TEMPLATE;
     if (documentName) {
@@ -362,16 +371,7 @@ export async function POST(req: NextRequest) {
     const result = await chat.sendMessageStream(currentPrompt);
 
     console.log("API_CHAT: Creating proper AI SDK stream response");
-
-    // Deduplicate chunks by document for display (but keep all chunks for LLM context)
-    const uniqueDocuments = new Map<number, DocumentChunk>();
-    chunks?.forEach((chunk) => {
-      if (!uniqueDocuments.has(chunk.document_id)) {
-        uniqueDocuments.set(chunk.document_id, chunk);
-      }
-    });
-    const deduplicatedSources = Array.from(uniqueDocuments.values());
-    console.log(`API_CHAT: Deduplicated sources from ${chunks?.length || 0} chunks to ${deduplicatedSources.length} unique documents`);
+    console.log(`API_CHAT: Using ${deduplicatedSources.length} deduplicated sources from ${chunks?.length || 0} total chunks`);
 
     // Create a proper AI SDK compatible stream
     const stream = new ReadableStream({
