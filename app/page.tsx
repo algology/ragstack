@@ -261,7 +261,14 @@ const ChatPageLayout: FC = () => {
   const showPromptSidebar = thread.messages.length === 0;
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-screen bg-[#191a1a] text-foreground">
+      {/* Sidebar - only show when chat is empty */}
+      {showPromptSidebar && (
+        <div className="absolute left-[15vw] top-80 w-80 z-10">
+          <FlowingPrompts />
+        </div>
+      )}
+
       {/* Main Chat Area with Thread Context */}
       <div 
         className={cn(
@@ -277,13 +284,6 @@ const ChatPageLayout: FC = () => {
           style={{ ["--thread-max-width" as string]: "42rem" }}
         >
           <div className="flex h-full">
-            {/* Prompt Sidebar - inside thread context, only visible when chat is empty */}
-            {showPromptSidebar && (
-              <div className="w-80 flex-shrink-0 pl-4">
-                <FlowingPrompts />
-              </div>
-            )}
-
             {/* Chat Content Area */}
             <div className="flex-1 flex flex-col">
               <ThreadPrimitive.Empty>
@@ -368,7 +368,11 @@ const ThreadWelcome: FC = () => {
             style={{ width: "auto", height: "auto" }}
           />
         </div>
-        <Composer />
+        <div className="flex justify-start"> {/* Position slightly left */}
+          <div className="w-full max-w-lg"> {/* Limit width and position left */}
+            <Composer />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -390,8 +394,8 @@ const Composer: FC = () => {
   };
 
   return (
-    <div className="bg-foreground/5 w-full rounded-full p-2">
-      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-[#202222] px-2.5 shadow-sm transition-colors ease-in">
+    <div className="w-full rounded-full p-2">
+      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-background px-2.5 shadow-sm transition-colors ease-in">
         <TooltipIconButton
           tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
           variant="ghost"
@@ -399,7 +403,7 @@ const Composer: FC = () => {
             "my-2.5 size-10 rounded-full p-2 transition-colors ease-in",
             isSearchEnabled
               ? "text-blue-500 hover:bg-blue-500/10"
-              : "text-gray-400 hover:text-white hover:bg-gray-500/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent"
           )}
           onClick={() => setIsSearchEnabled(!isSearchEnabled)}
         >
@@ -410,7 +414,7 @@ const Composer: FC = () => {
           rows={1}
           autoFocus
           placeholder={getPlaceholderText()}
-          className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-white"
+          className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-foreground"
           submitOnEnter
         />
         <div className="flex gap-3">
