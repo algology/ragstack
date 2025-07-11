@@ -162,10 +162,16 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
-    setPageNumber(1);
+    
+    // Use page number from context if provided, otherwise default to page 1
+    const targetPage = state.pageNumber && state.pageNumber > 0 && state.pageNumber <= numPages 
+      ? state.pageNumber 
+      : 1;
+    
+    setPageNumber(targetPage);
     setPdfError(null);
-    console.log(`PDF loaded successfully with ${numPages} pages`);
-  }, []);
+    console.log(`PDF loaded successfully with ${numPages} pages, navigating to page ${targetPage}`);
+  }, [state.pageNumber]);
 
   const onDocumentLoadError = useCallback((error: Error) => {
     console.error('PDF load error:', error);

@@ -73,7 +73,9 @@ interface DocumentChunk {
   document_id: number; // Document ID  
   content: string;
   name: string; // Document name, expected by the client
-  // similarity: number; // This also comes from the DB, can be added if needed downstream
+  page_number?: number; // Page number where this chunk appears in the original PDF
+  similarity: number; // Similarity score from vector search
+  additional_pages?: number[]; // Additional pages where content was found (for multi-page references)
 }
 
 export async function POST(req: NextRequest) {
@@ -262,14 +264,45 @@ export async function POST(req: NextRequest) {
       console.log("API_CHAT: Skipping RAG search for conversational query");
     }
 
-    // Deduplicate chunks by document FIRST, then number them for the AI
+    // Deduplicate chunks by document, keeping the HIGHEST SCORING chunk per document
+    // Also collect ALL page numbers where matches were found for multi-page reference tracking
     const uniqueDocuments = new Map<number, DocumentChunk>();
+    const documentPages = new Map<number, Set<number>>(); // Track all pages per document
+    
     chunks?.forEach((chunk) => {
-      if (!uniqueDocuments.has(chunk.document_id)) {
-        uniqueDocuments.set(chunk.document_id, chunk);
+      const docId = chunk.document_id;
+      const existing = uniqueDocuments.get(docId);
+      
+      // Track this page for the document
+      if (!documentPages.has(docId)) {
+        documentPages.set(docId, new Set());
+      }
+      if (chunk.page_number) {
+        documentPages.get(docId)!.add(chunk.page_number);
+      }
+      
+      // Keep the highest scoring chunk as the primary one
+      if (!existing || chunk.similarity > existing.similarity) {
+        uniqueDocuments.set(docId, chunk);
       }
     });
-    const deduplicatedSources = Array.from(uniqueDocuments.values());
+    
+    // Add additional page information to the primary chunks
+    const deduplicatedSources = Array.from(uniqueDocuments.values()).map(chunk => {
+      const allPages = documentPages.get(chunk.document_id);
+      if (allPages && allPages.size > 1) {
+        // Remove the primary page from additional pages and sort the rest
+        const additionalPages = Array.from(allPages)
+          .filter(page => page !== chunk.page_number)
+          .sort((a, b) => a - b);
+        
+        return {
+          ...chunk,
+          additional_pages: additionalPages.length > 0 ? additionalPages : undefined
+        };
+      }
+      return chunk;
+    });
     
     const numberedContext =
       deduplicatedSources && deduplicatedSources.length > 0
@@ -281,6 +314,13 @@ export async function POST(req: NextRequest) {
             .join("\n\n---\n\n")
         : "No relevant context found.";
     console.log(`API_CHAT: Prepared numbered context for LLM with ${deduplicatedSources.length} deduplicated sources`); // 7. Log context prep
+    console.log(`API_CHAT: Multi-page references found:`, deduplicatedSources
+      .filter(source => source.additional_pages && source.additional_pages.length > 0)
+      .map(source => ({ 
+        name: source.name, 
+        primaryPage: source.page_number, 
+        additionalPages: source.additional_pages 
+      })));
 
     let promptTemplate = SYSTEM_PROMPT_TEMPLATE;
     if (documentName) {

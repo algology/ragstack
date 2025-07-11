@@ -135,13 +135,13 @@ export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({
   return (
     <div
       className={cn(
-        "w-80 h-full bg-[#191a1a] border-r border-border flex flex-col transition-all duration-300 ease-in-out",
+        "w-80 h-full bg-[#191a1a] flex flex-col transition-all duration-300 ease-in-out",
         "animate-in slide-in-from-left-4 fade-in-0",
         className
       )}
     >
       {/* Header */}
-      <div className="p-6 border-b border-border">
+      <div className="p-6">
         <h2 className="text-xl font-semibold text-foreground mb-2">
           Get Started
         </h2>
@@ -222,7 +222,7 @@ export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({
       </div> */}
 
       {/* Footer */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4">
         <div className="flex justify-center space-x-1 mb-2">
           {Array.from({ length: 5 }).map((_, i) => (
             <div

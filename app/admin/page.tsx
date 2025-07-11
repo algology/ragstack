@@ -63,6 +63,12 @@ export default function AdminPage() {
     console.log("Files selected for upload:", files.map(f => f.name));
   }, []);
 
+  // Enhanced interface for page-aware text extraction
+  interface PageTextChunk {
+    text: string;
+    pageNumber: number;
+  }
+
   const extractTextFromFile = async (file: File): Promise<string> => {
     if (file.type === "application/pdf") {
       const pdfjsLib = await import("pdfjs-dist");
@@ -82,6 +88,38 @@ export default function AdminPage() {
       return fullText;
     } else if (file.type === "text/plain") {
       return await file.text();
+    } else {
+      throw new Error("Unsupported file type passed to extraction.");
+    }
+  };
+
+  const extractTextWithPageNumbers = async (file: File): Promise<PageTextChunk[]> => {
+    if (file.type === "application/pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pageChunks: PageTextChunk[] = [];
+      
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText =
+          textContent.items
+            ?.map((item) => ("str" in item ? item.str : ""))
+            .join(" \n") ?? "";
+        
+        if (pageText.trim()) {
+          pageChunks.push({
+            text: pageText,
+            pageNumber: i
+          });
+        }
+      }
+      return pageChunks;
+    } else if (file.type === "text/plain") {
+      const text = await file.text();
+      return [{ text, pageNumber: 1 }]; // Text files are treated as single page
     } else {
       throw new Error("Unsupported file type passed to extraction.");
     }
@@ -108,19 +146,20 @@ export default function AdminPage() {
         setUploadStatus(`Processing file ${i + 1} of ${selectedFiles.length}: ${fileName}...`);
 
         try {
-          const textContent = await extractTextFromFile(file);
+          // Extract text with page number information
+          const pageChunks = await extractTextWithPageNumbers(file);
 
-          if (!textContent.trim()) {
+          if (pageChunks.length === 0) {
             throw new Error("Could not extract text from file.");
           }
 
           setUploadStatus(`Uploading ${fileName} (${i + 1} of ${selectedFiles.length})...`);
 
-          // Create FormData for PDF files to send both file and text content
+          // Create FormData to send file, text content, and page information
           if (file.type === "application/pdf") {
             const formData = new FormData();
             formData.append("file", file);
-            formData.append("textContent", textContent);
+            formData.append("pageChunks", JSON.stringify(pageChunks));
 
             const response = await fetch("/api/upload", {
               method: "POST",
@@ -137,13 +176,16 @@ export default function AdminPage() {
               console.error(`Upload failed for ${fileName}:`, result);
             }
           } else {
-            // For text files, continue with JSON upload
+            // For text files, use JSON upload with page chunks
             const response = await fetch("/api/upload", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ fileName: fileName, textContent: textContent }),
+              body: JSON.stringify({ 
+                fileName: fileName, 
+                pageChunks: pageChunks 
+              }),
             });
 
             const result = await response.json();
