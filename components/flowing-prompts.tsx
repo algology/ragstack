@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { useThread, ThreadPrimitive } from "@assistant-ui/react";
+import { useThread, ThreadPrimitive, ComposerPrimitive } from "@assistant-ui/react";
 import { cn } from "@/lib/utils";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, GlobeIcon, ArrowUpIcon } from "lucide-react";
+import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 
 const WINE_INDUSTRY_PROMPTS = [
   "What is smoke taint and how does it affect wine quality?",
@@ -30,9 +31,94 @@ const WINE_INDUSTRY_PROMPTS = [
 
 interface FlowingPromptsProps {
   className?: string;
+  isSearchEnabled?: boolean;
+  setIsSearchEnabled?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
-export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({ className }) => {
+const ComposerAction: React.FC = () => {
+  return (
+    <>
+      <ThreadPrimitive.If running={false}>
+        <ComposerPrimitive.Send asChild>
+          <TooltipIconButton
+            tooltip="Send"
+            variant="default"
+            className="my-2.5 size-8 rounded-full p-1.5 transition-opacity ease-in bg-[#8b2c2c] hover:bg-[#b54545] text-white"
+            type="button"
+          >
+            <ArrowUpIcon className="!size-4" />
+          </TooltipIconButton>
+        </ComposerPrimitive.Send>
+      </ThreadPrimitive.If>
+      <ThreadPrimitive.If running>
+        <ComposerPrimitive.Cancel asChild>
+          <TooltipIconButton
+            tooltip="Cancel"
+            variant="default"
+            className="my-2.5 size-8 rounded-full p-1.5 transition-opacity ease-in bg-red-600 hover:bg-red-700 text-white"
+          >
+            <span className="!size-4">⏹</span>
+          </TooltipIconButton>
+        </ComposerPrimitive.Cancel>
+      </ThreadPrimitive.If>
+    </>
+  );
+};
+
+const SidebarComposer: React.FC<{
+  isSearchEnabled: boolean;
+  setIsSearchEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+}> = ({ isSearchEnabled, setIsSearchEnabled }) => {
+  const thread = useThread();
+  
+  // Check if there are any messages in the conversation
+  const hasMessages = thread.messages.length > 0;
+  
+  // Determine placeholder text based on search state and whether it's the first message
+  const getPlaceholderText = () => {
+    if (isSearchEnabled) {
+      return hasMessages ? "Ask follow-up with web search..." : "Ask with web search...";
+    }
+    return hasMessages ? "Ask follow-up.." : "Ask a question..";
+  };
+
+  return (
+    <div className="w-full p-2">
+      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-border bg-background px-2.5 shadow-sm transition-colors ease-in">
+        <TooltipIconButton
+          tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
+          variant="ghost"
+          className={cn(
+            "my-2.5 size-8 rounded-full p-1.5 transition-colors ease-in",
+            isSearchEnabled
+              ? "text-blue-500 hover:bg-blue-500/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+          )}
+          onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+        >
+          <GlobeIcon className="!size-4" />
+        </TooltipIconButton>
+
+        <ComposerPrimitive.Input
+          rows={1}
+          autoFocus
+          placeholder={getPlaceholderText()}
+          className="placeholder:text-muted-foreground max-h-32 flex-grow resize-none border-none bg-transparent px-3 py-3 text-sm outline-none focus:ring-0 disabled:cursor-not-allowed text-foreground"
+          submitOnEnter
+        />
+        <div className="flex gap-2">
+          <ComposerAction />
+        </div>
+      </ComposerPrimitive.Root>
+    </div>
+  );
+};
+
+export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({ 
+  className, 
+  isSearchEnabled = false, 
+  setIsSearchEnabled = () => {} 
+}) => {
   const thread = useThread();
 
   // Create extended list to ensure smooth infinite scroll
@@ -49,7 +135,7 @@ export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({ className }) => 
   return (
     <div
       className={cn(
-        "w-80 h-full bg-background border-r border-border flex flex-col transition-all duration-300 ease-in-out",
+        "w-80 h-full bg-[#191a1a] border-r border-border flex flex-col transition-all duration-300 ease-in-out",
         "animate-in slide-in-from-left-4 fade-in-0",
         className
       )}
@@ -126,6 +212,14 @@ export const FlowingPrompts: React.FC<FlowingPromptsProps> = ({ className }) => 
           </div>
         </div>
       </div>
+
+      {/* Input Field */}
+      {/* <div className="border-t border-border">
+        <SidebarComposer 
+          isSearchEnabled={isSearchEnabled} 
+          setIsSearchEnabled={setIsSearchEnabled} 
+        />
+      </div> */}
 
       {/* Footer */}
       <div className="p-4 border-t border-border">
