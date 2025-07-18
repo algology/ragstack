@@ -53,6 +53,8 @@ interface DocumentChunk {
   document_id?: number; // Document ID
   content: string;
   name?: string;
+  page_number?: number; // Page number where this chunk appears in the original PDF
+  additional_pages?: number[]; // Additional pages where content was found (for multi-page references)
 }
 
 interface WebSource {
@@ -66,6 +68,8 @@ interface BlendedSource {
   name: string;
   uri?: string; // For web sources
   documentId?: string; // For RAG sources
+  pageNumber?: number; // For RAG sources with page information
+  additionalPages?: number[]; // Additional pages where content was found (for multi-page references)
 }
 
 interface GroundingMetadata {
@@ -368,8 +372,8 @@ const ThreadWelcome: FC = () => {
             style={{ width: "auto", height: "auto" }}
           />
         </div>
-        <div className="flex justify-start"> {/* Position slightly left */}
-          <div className="w-full max-w-lg"> {/* Limit width and position left */}
+        <div className="flex justify-center"> {/* Center the chat box */}
+          <div className="w-full max-w-xl"> {/* Centered with better proportions */}
             <Composer />
           </div>
         </div>
@@ -475,7 +479,11 @@ const Citation: FC<{
   const isWebSource = source?.type === "web";
   const isDocumentSource = source?.type === "rag";
   const tooltipText = source
-    ? `${source.name}${source.content ? ": " + source.content : ""}`
+    ? `${source.name}${source.pageNumber ? 
+        (source.additionalPages && source.additionalPages.length > 0 
+          ? ` (Pages ${source.pageNumber}, ${source.additionalPages.join(", ")})`
+          : ` (Page ${source.pageNumber})`) 
+        : ""}${source.content ? ": " + source.content : ""}`
     : "Source not available";
 
   const handleClick = () => {
@@ -485,9 +493,9 @@ const Citation: FC<{
     } else if (isDocumentSource && source?.documentId && source?.name) {
       // Parse document ID as number - for now we'll use a simple approach
       const docId = parseInt(source.documentId);
-      console.log("Opening PDF viewer with docId:", docId, "name:", source.name);
+      console.log("Opening PDF viewer with docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber);
       if (!isNaN(docId)) {
-        openPDFViewer(docId, source.name);
+        openPDFViewer(docId, source.name, source.pageNumber);
       } else {
         console.error("Invalid document ID:", source.documentId);
       }
@@ -790,6 +798,8 @@ const PerplexityAssistantMessage: FC = () => {
           content: source.content,
           name: source.name || "Document",
           documentId: source.document_id?.toString(), // Pass through the document ID
+          pageNumber: source.page_number, // Pass through the page number
+          additionalPages: source.additional_pages, // Pass through additional pages
         };
         console.log("Creating blended source:", blendedSource);
         return blendedSource;
@@ -888,9 +898,9 @@ const PerplexityAssistantMessage: FC = () => {
                         console.log("Source card clicked:", source);
                         if (source.type === "rag" && source.documentId && source.name) {
                           const docId = parseInt(source.documentId);
-                          console.log("Opening PDF viewer from source card - docId:", docId, "name:", source.name);
+                          console.log("Opening PDF viewer from source card - docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber);
                           if (!isNaN(docId)) {
-                            openPDFViewer(docId, source.name);
+                            openPDFViewer(docId, source.name, source.pageNumber);
                           } else {
                             console.error("Invalid document ID from source card:", source.documentId);
                           }
@@ -922,9 +932,19 @@ const PerplexityAssistantMessage: FC = () => {
                           [{originalIndex}]
                         </span>
                       </div>
-                      <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">
-                        {source.name.replace(".pdf", "")}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors truncate max-w-[200px]">
+                          {source.name.replace(".pdf", "")}
+                        </span>
+                        {source.type === "rag" && source.pageNumber && (
+                          <span className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors">
+                            {source.additionalPages && source.additionalPages.length > 0 
+                              ? `Pages ${source.pageNumber}, ${source.additionalPages.join(", ")}`
+                              : `Page ${source.pageNumber}`
+                            }
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

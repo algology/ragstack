@@ -17,6 +17,12 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Enhanced interface for page-aware text chunks
+interface PageTextChunk {
+  text: string;
+  pageNumber: number;
+}
+
 export async function POST(req: NextRequest) {
   // TODO: Get authenticated user ID (e.g., from Supabase session)
   // const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -31,17 +37,23 @@ export async function POST(req: NextRequest) {
     console.log("Upload API: Content-Type:", contentType);
     
     let fileName: string;
-    let textContent: string;
+    let pageChunks: PageTextChunk[] = [];
     let pdfBuffer: Buffer | null = null;
 
     if (contentType?.includes('application/json')) {
-      // Existing text-only upload
+      // Updated JSON upload with pageChunks support
       console.log("Upload API: Processing JSON upload");
       const body = await req.json();
       fileName = body.fileName;
-      textContent = body.textContent;
+      
+      if (body.pageChunks) {
+        pageChunks = body.pageChunks;
+      } else if (body.textContent) {
+        // Backward compatibility: convert textContent to single page chunk
+        pageChunks = [{ text: body.textContent, pageNumber: 1 }];
+      }
     } else {
-      // New PDF file upload
+      // New PDF file upload with pageChunks
       console.log("Upload API: Processing FormData upload");
       const formData = await req.formData();
       const file = formData.get('file') as File;
@@ -55,8 +67,19 @@ export async function POST(req: NextRequest) {
       }
 
       fileName = file.name;
-      textContent = formData.get('textContent') as string;
-      console.log("Upload API: File details:", { fileName, fileType: file.type, hasTextContent: !!textContent });
+      const pageChunksString = formData.get('pageChunks') as string;
+      
+      if (pageChunksString) {
+        pageChunks = JSON.parse(pageChunksString);
+      } else {
+        // Backward compatibility: check for textContent
+        const textContent = formData.get('textContent') as string;
+        if (textContent) {
+          pageChunks = [{ text: textContent, pageNumber: 1 }];
+        }
+      }
+      
+      console.log("Upload API: File details:", { fileName, fileType: file.type, pageChunksCount: pageChunks.length });
       
       // Store PDF file data
       if (file.type === 'application/pdf') {
@@ -72,23 +95,40 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!textContent || typeof textContent !== "string") {
+    if (!pageChunks || pageChunks.length === 0) {
       return NextResponse.json(
-        { error: "Missing or invalid textContent" },
+        { error: "Missing or invalid page chunks" },
         { status: 400 }
       );
     }
 
-    // 1. Chunk the received text
+    // 1. Process page chunks and create document chunks with page numbers
     const splitter = new RecursiveCharacterTextSplitter({
       chunkSize: CHUNK_SIZE,
       chunkOverlap: CHUNK_OVERLAP,
     });
-    const chunks = await splitter.splitText(textContent);
+    
+    // Store page-aware chunks with their page numbers
+    interface DocumentChunkWithPage {
+      text: string;
+      pageNumber: number;
+    }
+    
+    const documentChunks: DocumentChunkWithPage[] = [];
+    
+    for (const pageChunk of pageChunks) {
+      const pageTextChunks = await splitter.splitText(pageChunk.text);
+      for (const chunk of pageTextChunks) {
+        documentChunks.push({
+          text: chunk,
+          pageNumber: pageChunk.pageNumber
+        });
+      }
+    }
 
-    if (chunks.length === 0) {
+    if (documentChunks.length === 0) {
       return NextResponse.json(
-        { error: "Could not extract chunks from provided text content" },
+        { error: "Could not extract chunks from provided page content" },
         { status: 400 }
       );
     }
@@ -96,12 +136,13 @@ export async function POST(req: NextRequest) {
     // 2. Create embeddings in batches
     const batchSize = EMBEDDING_BATCH_SIZE;
     let allEmbeddings: number[][] = [];
+    const chunkTexts = documentChunks.map(chunk => chunk.text);
 
-    for (let i = 0; i < chunks.length; i += batchSize) {
-      const batchChunks = chunks.slice(i, i + batchSize);
+    for (let i = 0; i < chunkTexts.length; i += batchSize) {
+      const batchChunks = chunkTexts.slice(i, i + batchSize);
       console.log(
         `Processing embedding batch ${i / batchSize + 1} of ${Math.ceil(
-          chunks.length / batchSize
+          chunkTexts.length / batchSize
         )} (size: ${batchChunks.length})`
       );
 
@@ -118,9 +159,9 @@ export async function POST(req: NextRequest) {
 
     console.log(`Generated ${allEmbeddings.length} embeddings total.`);
 
-    if (allEmbeddings.length !== chunks.length) {
+    if (allEmbeddings.length !== documentChunks.length) {
       console.error("Mismatch after batching:", {
-        chunks: chunks.length,
+        chunks: documentChunks.length,
         embeddings: allEmbeddings.length,
       });
       throw new Error(
@@ -176,11 +217,12 @@ export async function POST(req: NextRequest) {
     const documentId = docData.id;
     console.log("Upload API: Document inserted with ID:", documentId);
 
-    const chunkData = chunks.map((chunk, index) => ({
+    const chunkData = documentChunks.map((chunk, index) => ({
       document_id: documentId,
       // Sanitize the chunk content by removing NULL characters (\u0000)
-      content: chunk.replace(/\u0000/g, ""),
+      content: chunk.text.replace(/\u0000/g, ""),
       embedding: allEmbeddings[index],
+      page_number: chunk.pageNumber,
       // TODO: Add user_id here as well
       // user_id: userId
     }));
