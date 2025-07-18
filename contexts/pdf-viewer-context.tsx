@@ -1,4 +1,4 @@
-"use client";
+ "use client";
 
 import React, { createContext, useContext, useState, useCallback } from "react";
 
@@ -7,9 +7,9 @@ interface PDFViewerState {
   documentId: number | null;
   documentName: string | null;
   content: string | null; // Keep for fallback text content
+  pageNumber: number | null; // Page to navigate to when opening PDF
   isLoading: boolean;
   error: string | null;
-  pageNumber: number | null; // Page number to navigate to
 }
 
 interface PDFViewerContextType {
@@ -29,13 +29,13 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
     documentId: null,
     documentName: null,
     content: null,
+    pageNumber: null,
     isLoading: false,
     error: null,
-    pageNumber: null,
   });
 
   const openPDFViewer = useCallback(async (documentId: number, documentName: string, pageNumber?: number) => {
-    console.log("PDF Viewer: openPDFViewer called with:", { documentId, documentName, pageNumber });
+    console.log("PDF Viewer: openPDFViewer called with:", { documentId, documentName });
     
     // For visual PDF viewer, we don't need to pre-fetch content
     // The PDF component will handle loading directly from the API
@@ -44,9 +44,9 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
       documentId,
       documentName,
       content: null,
+      pageNumber: pageNumber || null,
       isLoading: false, // Not pre-loading content
       error: null,
-      pageNumber: pageNumber || null,
     });
 
     console.log("PDF Viewer: State set to open for visual PDF");
@@ -93,9 +93,9 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
       documentId: null,
       documentName: null,
       content: null,
+      pageNumber: null,
       isLoading: false,
       error: null,
-      pageNumber: null,
     });
   }, []);
 

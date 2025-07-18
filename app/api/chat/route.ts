@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GEMINI_CHAT_MODEL = "gemini-1.5-flash-latest";
+const GEMINI_CHAT_MODEL = "gemini-2.5-flash";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------
@@ -22,7 +22,14 @@ const openaiEmbeddings = new OpenAI({
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 // System prompt templates - these are correct for instructing the LLM
-const SYSTEM_PROMPT_TEMPLATE = `I'm your knowledgeable wine assistant, Waine, ready to help with your questions.
+const getSystemPromptTemplate = (questionType: "conversational" | "specific" | "open-ended") => {
+  const responseFormatting = {
+    conversational: "Keep your response brief and friendly - just a sentence or two.",
+    specific: "Provide a direct, concise answer to the specific question asked. Aim for 1-2 sentences with the exact information requested.",
+    "open-ended": "Provide a comprehensive explanation with relevant details. Include context, examples, and background information to fully answer the question. Use 2-4 paragraphs as needed to thoroughly address the topic."
+  };
+
+  return `I'm your knowledgeable wine assistant, Waine, ready to help with your questions.
 I'll provide answers based on the information available to me.
 This information is organised into numbered sources (e.g., [1], [2], ...).
 When I use information from a specific source, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after the information. This way, you'll know exactly where it came from.
@@ -32,12 +39,22 @@ IMPORTANT: When web search is enabled and I have access to web sources (indicate
 If I don't have the specific information you're looking for in my available sources, I'll let you know.
 My goal is to be clear, helpful, and share interesting wine facts!
 
+RESPONSE FORMATTING: ${responseFormatting[questionType]}
+
 Please respond using Australian English spelling conventions (e.g., colour, flavour, organised, realise, centre).
 
 Sourced Information:
 {context}`;
+};
 
-const SYSTEM_PROMPT_TEMPLATE_WITH_DOC = `I'm your knowledgeable wine assistant, and I'll help you with your questions about the document "{documentName}".
+const getSystemPromptTemplateWithDoc = (questionType: "conversational" | "specific" | "open-ended") => {
+  const responseFormatting = {
+    conversational: "Keep your response brief and friendly - just a sentence or two.",
+    specific: "Provide a direct, concise answer to the specific question asked. Aim for 1-2 sentences with the exact information requested.",
+    "open-ended": "Provide a comprehensive explanation with relevant details. Include context, examples, and background information to fully answer the question. Use 2-4 paragraphs as needed to thoroughly address the topic."
+  };
+
+  return `I'm your knowledgeable wine assistant, and I'll help you with your questions about the document "{documentName}".
 I'll answer your questions about "{documentName}" using the specific details provided for it below.
 These details are broken down into numbered parts (e.g., [1], [2], ...) specific to "{documentName}".
 When I use information from one of these parts, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after it. This helps you see where the information came from.
@@ -47,10 +64,13 @@ IMPORTANT: When web search is enabled and I have access to web sources (indicate
 If the information for "{documentName}" doesn't cover your question, I'll make sure to tell you.
 I aim to be clear, helpful and share interesting facts about "{documentName}"!
 
+RESPONSE FORMATTING: ${responseFormatting[questionType]}
+
 Please respond using Australian English spelling conventions (e.g., colour, flavour, organised, realise, centre).
 
 Information for "{documentName}":
 {context}`;
+};
 
 // Define the expected request body structure
 interface ChatRequestBody {
@@ -125,65 +145,77 @@ export async function POST(req: NextRequest) {
       userMessageText
     ); // 3. Log user message text
 
-    // Check if the query needs RAG search (avoid searching for simple greetings/conversational queries)
-    const shouldSearchRAG = (query: string): boolean => {
+    // Detect question type for response formatting
+    const detectQuestionType = (query: string): "conversational" | "specific" | "open-ended" => {
       const normalizedQuery = query.toLowerCase().trim();
 
-      // Simple greetings and conversational phrases that don't need RAG
-      const nonSearchQueries = [
-        "hi",
-        "hello",
-        "hey",
-        "howdy",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "thanks",
-        "thank you",
-        "bye",
-        "goodbye",
-        "see you",
-        "ok",
-        "okay",
-        "yes",
-        "no",
-        "what",
-        "how are you",
-        "how do you do",
-        "nice to meet you",
-        "help",
-        "?",
+      // Simple greetings and conversational phrases
+      const conversationalQueries = [
+        "hi", "hello", "hey", "howdy", "good morning", "good afternoon", 
+        "good evening", "thanks", "thank you", "bye", "goodbye", "see you",
+        "ok", "okay", "how are you", "how do you do", "nice to meet you", "help"
       ];
 
-      // If query is too short (less than 3 chars) or matches non-search patterns
-      if (normalizedQuery.length < 3) return false;
-      if (nonSearchQueries.includes(normalizedQuery)) return false;
-      if (nonSearchQueries.some((phrase) => normalizedQuery === phrase))
-        return false;
+      if (normalizedQuery.length < 3 || conversationalQueries.includes(normalizedQuery)) {
+        return "conversational";
+      }
+
+      // Specific/factual questions that need short, direct answers
+      const specificIndicators = [
+        /^(what is|what's) (the|a) (name|price|year|date|age|alcohol content)/,
+        /^(which|what) (wine|grape|vineyard|vintage|bottle)/,
+        /^(is|are|was|were|does|did|can|will|would)/,
+        /^(how much|how many|how old)/,
+        /^(when (was|is|did|does))/,
+        /^(where (is|was|can|do))/,
+        /what year/,
+        /\b(yes or no|true or false)\b/
+      ];
+
+      if (specificIndicators.some(pattern => pattern.test(normalizedQuery))) {
+        return "specific";
+      }
+
+      // Open-ended questions that need detailed explanations
+      const openEndedIndicators = [
+        /^(how (to|do you|does|can|should))/,
+        /^(why (is|are|do|does|should|would))/,
+        /^(explain|describe|tell me about)/,
+        /^(what are (the|some)|what makes)/,
+        /^(help me understand|i want to know about|i'm interested in)/,
+        /\b(process|method|technique|approach|difference|comparison)\b/,
+        /\b(benefits|advantages|disadvantages|pros and cons)\b/
+      ];
+
+      if (openEndedIndicators.some(pattern => pattern.test(normalizedQuery))) {
+        return "open-ended";
+      }
+
+      // Default classification based on length and complexity
+      if (normalizedQuery.length > 20 || normalizedQuery.includes(" and ") || normalizedQuery.includes(" or ")) {
+        return "open-ended";
+      }
+
+      return "specific";
+    };
+
+    // Check if the query needs RAG search (avoid searching for simple greetings/conversational queries)
+    const shouldSearchRAG = (query: string): boolean => {
+      const questionType = detectQuestionType(query);
+      
+      if (questionType === "conversational") return false;
+
+      const normalizedQuery = query.toLowerCase().trim();
 
       // Always search if it contains wine-related terms or technical questions
       const wineTerms = [
-        "wine",
-        "grape",
-        "vineyard",
-        "bottle",
-        "vintage",
-        "alcohol",
-        "ferment",
+        "wine", "grape", "vineyard", "bottle", "vintage", "alcohol", "ferment"
       ];
       if (wineTerms.some((term) => normalizedQuery.includes(term))) return true;
 
       // Search for questions that seem to need factual information
       const questionWords = [
-        "what",
-        "how",
-        "why",
-        "when",
-        "where",
-        "which",
-        "tell me",
-        "explain",
-        "describe",
+        "what", "how", "why", "when", "where", "which", "tell me", "explain", "describe"
       ];
       if (
         questionWords.some((word) => normalizedQuery.includes(word)) &&
@@ -195,7 +227,9 @@ export async function POST(req: NextRequest) {
       return normalizedQuery.length > 8;
     };
 
+    const questionType = detectQuestionType(userMessageText);
     const needsRAGSearch = shouldSearchRAG(userMessageText);
+    console.log("API_CHAT: Question type:", questionType);
     console.log("API_CHAT: Needs RAG search:", needsRAGSearch);
 
     let chunks: DocumentChunk[] = [];
@@ -322,9 +356,9 @@ export async function POST(req: NextRequest) {
         additionalPages: source.additional_pages 
       })));
 
-    let promptTemplate = SYSTEM_PROMPT_TEMPLATE;
+    let promptTemplate = getSystemPromptTemplate(questionType);
     if (documentName) {
-      promptTemplate = SYSTEM_PROMPT_TEMPLATE_WITH_DOC.replace(
+      promptTemplate = getSystemPromptTemplateWithDoc(questionType).replace(
         /{documentName}/g,
         documentName
       );
