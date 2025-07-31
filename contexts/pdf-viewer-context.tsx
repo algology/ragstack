@@ -8,17 +8,21 @@ interface PDFViewerState {
   documentName: string | null;
   content: string | null; // Keep for fallback text content
   pageNumber: number | null; // Page to navigate to when opening PDF
+  citationPages: number[]; // All pages relevant to the current citation
+  currentCitationIndex: number; // Current position in citation pages
   isLoading: boolean;
   error: string | null;
 }
 
 interface PDFViewerContextType {
   state: PDFViewerState;
-  openPDFViewer: (documentId: number, documentName: string, pageNumber?: number) => void;
+  openPDFViewer: (documentId: number, documentName: string, pageNumber?: number, citationPages?: number[]) => void;
   closePDFViewer: () => void;
   setContent: (content: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  navigateToCitationPage: (direction: 'prev' | 'next') => void;
+  jumpToCitationPage: (pageNumber: number) => void;
 }
 
 const PDFViewerContext = createContext<PDFViewerContextType | null>(null);
@@ -30,21 +34,28 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
     documentName: null,
     content: null,
     pageNumber: null,
+    citationPages: [],
+    currentCitationIndex: 0,
     isLoading: false,
     error: null,
   });
 
-  const openPDFViewer = useCallback(async (documentId: number, documentName: string, pageNumber?: number) => {
-    console.log("PDF Viewer: openPDFViewer called with:", { documentId, documentName });
+  const openPDFViewer = useCallback(async (documentId: number, documentName: string, pageNumber?: number, citationPages?: number[]) => {
+    console.log("PDF Viewer: openPDFViewer called with:", { documentId, documentName, pageNumber, citationPages });
     
     // For visual PDF viewer, we don't need to pre-fetch content
     // The PDF component will handle loading directly from the API
+    const pages = citationPages || (pageNumber ? [pageNumber] : []);
+    const currentIndex = pageNumber && pages.includes(pageNumber) ? pages.indexOf(pageNumber) : 0;
+    
     setState({
       isOpen: true,
       documentId,
       documentName,
       content: null,
       pageNumber: pageNumber || null,
+      citationPages: pages,
+      currentCitationIndex: currentIndex,
       isLoading: false, // Not pre-loading content
       error: null,
     });
@@ -94,6 +105,8 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
       documentName: null,
       content: null,
       pageNumber: null,
+      citationPages: [],
+      currentCitationIndex: 0,
       isLoading: false,
       error: null,
     });
@@ -111,6 +124,39 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
     setState(prev => ({ ...prev, error, isLoading: false }));
   }, []);
 
+  const navigateToCitationPage = useCallback((direction: 'prev' | 'next') => {
+    setState(prev => {
+      if (prev.citationPages.length === 0) return prev;
+      
+      let newIndex = prev.currentCitationIndex;
+      if (direction === 'prev') {
+        newIndex = Math.max(0, prev.currentCitationIndex - 1);
+      } else {
+        newIndex = Math.min(prev.citationPages.length - 1, prev.currentCitationIndex + 1);
+      }
+      
+      const newPageNumber = prev.citationPages[newIndex];
+      return {
+        ...prev,
+        currentCitationIndex: newIndex,
+        pageNumber: newPageNumber,
+      };
+    });
+  }, []);
+
+  const jumpToCitationPage = useCallback((pageNumber: number) => {
+    setState(prev => {
+      const pageIndex = prev.citationPages.indexOf(pageNumber);
+      if (pageIndex === -1) return prev;
+      
+      return {
+        ...prev,
+        currentCitationIndex: pageIndex,
+        pageNumber: pageNumber,
+      };
+    });
+  }, []);
+
   const value = {
     state,
     openPDFViewer,
@@ -118,6 +164,8 @@ export function PDFViewerProvider({ children }: { children: React.ReactNode }) {
     setContent,
     setLoading,
     setError,
+    navigateToCitationPage,
+    jumpToCitationPage,
   };
 
   return (
