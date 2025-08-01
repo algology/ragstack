@@ -33,20 +33,20 @@ import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 
 import {
   ArrowDownIcon,
-  ArrowRightIcon,
   ArrowUpIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
-  FileText,
   GlobeIcon,
   RefreshCwIcon,
+  Camera,
 } from "lucide-react";
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { PromptDropdown, WINE_PRODUCTION_PROMPTS, VINEYARD_MANAGEMENT_PROMPTS } from "@/components/prompt-dropdown";
+import { ImageUploadModal } from "@/components/image-upload-modal";
 import { Wine, Grape } from "lucide-react";
 
 interface DocumentChunk {
@@ -99,17 +99,35 @@ export default function ChatPage() {
   const [messageGrounding, setMessageGrounding] = useState<MessageGroundingMap>(
     new Map()
   );
+  
+  // Image context state management
+  const [uploadedImage, setUploadedImage] = useState<{
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null>(null);
 
   const chatRuntimeBody = useMemo(
-    () => ({
-      documentId: currentChatContextId,
-      documentName:
-        currentChatContextName === "All Documents"
-          ? undefined
-          : currentChatContextName,
-      enableSearch: isSearchEnabled,
-    }),
-    [currentChatContextId, currentChatContextName, isSearchEnabled]
+    () => {
+      const body = {
+        documentId: currentChatContextId,
+        documentName:
+          currentChatContextName === "All Documents"
+            ? undefined
+            : currentChatContextName,
+        enableSearch: isSearchEnabled,
+        imageContext: uploadedImage?.imageContext,
+      };
+      console.log("CLIENT: Chat runtime body created:", {
+        ...body,
+        imageContextPreview: body.imageContext ? body.imageContext.substring(0, 100) + "..." : null
+      });
+      return body;
+    },
+    [currentChatContextId, currentChatContextName, isSearchEnabled, uploadedImage]
   );
 
   const runtime = useChatRuntime({
@@ -183,6 +201,12 @@ export default function ChatPage() {
                     groundingToSet
                   );
                 }
+
+                // Check if image was used and clear it
+                if (parsedPayload.imageUsed && uploadedImage) {
+                  console.log("CLIENT: Image was used in this request, clearing uploaded image");
+                  setUploadedImage(null);
+                }
               }
             }
           } else {
@@ -242,8 +266,10 @@ export default function ChatPage() {
       messageGrounding,
       isSearchEnabled,
       setIsSearchEnabled,
+      uploadedImage,
+      setUploadedImage,
     }),
-    [messageSources, messageGrounding, isSearchEnabled]
+    [messageSources, messageGrounding, isSearchEnabled, uploadedImage]
   ); // Removed setIsSearchEnabled from deps as it's stable
 
   return (
@@ -318,6 +344,22 @@ interface ChatPageContextType {
   messageGrounding: MessageGroundingMap;
   isSearchEnabled: boolean;
   setIsSearchEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  uploadedImage: {
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null;
+  setUploadedImage: React.Dispatch<React.SetStateAction<{
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null>>;
 }
 
 const ChatPageContext = React.createContext<ChatPageContextType>({
@@ -325,6 +367,8 @@ const ChatPageContext = React.createContext<ChatPageContextType>({
   messageGrounding: new Map(),
   isSearchEnabled: false,
   setIsSearchEnabled: () => {},
+  uploadedImage: null,
+  setUploadedImage: () => {},
 });
 
 function useChatPageContext() {
@@ -360,7 +404,7 @@ const ThreadWelcome: FC = () => {
           />
         </div>
         <div className="flex justify-center"> {/* Center the chat box */}
-          <div className="w-full max-w-xl"> {/* Centered with better proportions */}
+          <div className="w-full max-w-4xl"> {/* Centered with longer proportions */}
             <Composer />
           </div>
         </div>
@@ -370,10 +414,12 @@ const ThreadWelcome: FC = () => {
 };
 
 const Composer: FC = () => {
-  const { isSearchEnabled, setIsSearchEnabled } = useChatPageContext();
+  const { isSearchEnabled, setIsSearchEnabled, uploadedImage, setUploadedImage } = useChatPageContext();
   const thread = useThread();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [showImageUpload, setShowImageUpload] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   
   // Check if there are any messages in the conversation
   const hasMessages = thread.messages.length > 0;
@@ -392,6 +438,49 @@ const Composer: FC = () => {
 
   const handlePromptSelect = () => {
     setActiveDropdown(null);
+  };
+
+  const handleImageUpload = async (file: File, description?: string) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (description) {
+        formData.append('description', description);
+      }
+
+      const response = await fetch('/api/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed');
+      }
+
+      console.log('Image processed successfully:', result);
+      
+      // Store image context in state instead of populating textarea
+      if (result.imageContext && result.aiAnalysis) {
+        setUploadedImage({
+          fileName: result.fileName,
+          fileSize: result.fileSize,
+          mimeType: result.mimeType,
+          imageContext: result.imageContext,
+          aiAnalysis: result.aiAnalysis,
+          userDescription: result.userDescription
+        });
+        
+        // Close the modal
+        setShowImageUpload(false);
+        
+        console.log('Image context stored in state. Camera button should now show badge.');
+      }
+    } catch (error) {
+      console.error('Image processing failed:', error);
+      alert('Failed to process image: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
   };
 
   // Close dropdown when clicking outside
@@ -416,7 +505,7 @@ const Composer: FC = () => {
 
   return (
     <div ref={composerRef} className="w-full rounded-full p-2 relative">
-      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-background px-2.5 shadow-sm transition-colors ease-in">
+      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-zinc-600 bg-zinc-700 px-2.5 shadow-sm transition-colors ease-in">
         {/* Show prompt dropdowns only when chat is empty */}
         {!hasMessages && (
           <>
@@ -438,6 +527,22 @@ const Composer: FC = () => {
               onToggle={() => handleDropdownToggle('vineyard')}
               onPromptSelect={handlePromptSelect}
             />
+            
+            <div className="relative">
+              <TooltipIconButton
+                tooltip="Upload Image"
+                variant="ghost"
+                className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
+                onClick={() => setShowImageUpload(true)}
+              >
+                <Camera className="!size-5" />
+              </TooltipIconButton>
+              {uploadedImage && (
+                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                  1
+                </div>
+              )}
+            </div>
           </>
         )}
         
@@ -456,6 +561,7 @@ const Composer: FC = () => {
         </TooltipIconButton>
 
         <ComposerPrimitive.Input
+          ref={inputRef}
           rows={1}
           autoFocus
           placeholder={getPlaceholderText()}
@@ -469,8 +575,8 @@ const Composer: FC = () => {
       
       {/* Full-width dropdown positioned below the entire input bar */}
       {!hasMessages && activeDropdown && (
-        <div className="absolute left-0 right-0 top-full mt-2 bg-background border border-border rounded-lg shadow-lg z-50 overflow-hidden">
-          <div className="p-3 border-b border-border bg-muted/30">
+        <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-700 border border-zinc-600 rounded-lg shadow-lg z-50 overflow-hidden">
+          <div className="p-3 border-b border-zinc-600 bg-zinc-600/30">
             <div className="flex items-center gap-2">
               {activeDropdown === 'wine' ? (
                 <>
@@ -511,6 +617,13 @@ const Composer: FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Image Upload Modal */}
+      <ImageUploadModal
+        isOpen={showImageUpload}
+        onClose={() => setShowImageUpload(false)}
+        onUpload={handleImageUpload}
+      />
     </div>
   );
 };

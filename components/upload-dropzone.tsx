@@ -136,7 +136,7 @@ export function UploadDropzone({
         )}
       >
         <p className="font-semibold">Click to upload, or drag files here</p>
-        <p className="text-xs text-muted-foreground">Supports: TXT, PDF</p>
+        <p className="text-xs text-muted-foreground">Supports: TXT, PDF, JPG, PNG, GIF, WebP</p>
       </div>
     </div>
   );
