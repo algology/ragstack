@@ -22,15 +22,19 @@ const openaiEmbeddings = new OpenAI({
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 // System prompt templates - these are correct for instructing the LLM
-const getSystemPromptTemplate = (questionType: "conversational" | "specific" | "open-ended") => {
+const getSystemPromptTemplate = (questionType: "conversational" | "specific" | "open-ended", hasImageContext: boolean = false) => {
   const responseFormatting = {
     conversational: "Keep your response brief and friendly - just a sentence or two.",
     specific: "Provide a direct, concise answer to the specific question asked. Aim for 1-2 sentences with the exact information requested.",
     "open-ended": "Provide a comprehensive explanation with relevant details. Include context, examples, and background information to fully answer the question. Use 2-4 paragraphs as needed to thoroughly address the topic."
   };
 
+  const imageInstructions = hasImageContext ? `
+
+IMPORTANT - IMAGE ANALYSIS: You have been provided with an analysis of an uploaded image. This image analysis contains detailed observations about what is visible in the image. You MUST discuss and reference this image analysis in your response. Start your response by describing what you observe in the image, then connect it to relevant wine knowledge from the sources below. Your response should demonstrate that you understand what the user has shown you in their image.` : '';
+
   return `I'm your knowledgeable wine assistant, Waine, ready to help with your questions.
-I'll provide answers based on the information available to me.
+I'll provide answers based on the information available to me.${imageInstructions}
 This information is organised into numbered sources (e.g., [1], [2], ...).
 When I use information from a specific source, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after the information. This way, you'll know exactly where it came from.
 
@@ -47,14 +51,18 @@ Sourced Information:
 {context}`;
 };
 
-const getSystemPromptTemplateWithDoc = (questionType: "conversational" | "specific" | "open-ended") => {
+const getSystemPromptTemplateWithDoc = (questionType: "conversational" | "specific" | "open-ended", hasImageContext: boolean = false) => {
   const responseFormatting = {
     conversational: "Keep your response brief and friendly - just a sentence or two.",
     specific: "Provide a direct, concise answer to the specific question asked. Aim for 1-2 sentences with the exact information requested.",
     "open-ended": "Provide a comprehensive explanation with relevant details. Include context, examples, and background information to fully answer the question. Use 2-4 paragraphs as needed to thoroughly address the topic."
   };
 
-  return `I'm your knowledgeable wine assistant, and I'll help you with your questions about the document "{documentName}".
+  const imageInstructions = hasImageContext ? `
+
+IMPORTANT - IMAGE ANALYSIS: You have been provided with an analysis of an uploaded image. This image analysis contains detailed observations about what is visible in the image. You MUST discuss and reference this image analysis in your response. Start your response by describing what you observe in the image, then connect it to relevant information from "{documentName}" below. Your response should demonstrate that you understand what the user has shown you in their image.` : '';
+
+  return `I'm your knowledgeable wine assistant, and I'll help you with your questions about the document "{documentName}".${imageInstructions}
 I'll answer your questions about "{documentName}" using the specific details provided for it below.
 These details are broken down into numbered parts (e.g., [1], [2], ...) specific to "{documentName}".
 When I use information from one of these parts, I'll cite the source number(s) in square brackets, like [1] or [2, 3], right after it. This helps you see where the information came from.
@@ -78,6 +86,7 @@ interface ChatRequestBody {
   documentId?: string;
   documentName?: string;
   enableSearch?: boolean; // Added for search toggle
+  imageContext?: string; // Added for image context
 }
 
 // Define types for RPC parameters and document chunks
@@ -106,11 +115,14 @@ export async function POST(req: NextRequest) {
       documentId,
       documentName,
       enableSearch,
+      imageContext,
     }: ChatRequestBody = await req.json();
     console.log("API_CHAT: Parsed request body:", {
       documentId,
       documentName,
       messagesLength: messages.length,
+      hasImageContext: !!imageContext,
+      imageContextPreview: imageContext ? imageContext.substring(0, 100) + "..." : null,
     }); // 2. Log parsed body
 
     const lastUserMessage = messages[messages.length - 1];
@@ -128,6 +140,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Combine user message with image context if available
+    if (imageContext && userMessageText) {
+      userMessageText = `${imageContext}\n\nUser question: ${userMessageText}`;
+      console.log("API_CHAT: Combined message with image context");
+    } else if (imageContext && !userMessageText) {
+      userMessageText = imageContext;
+      console.log("API_CHAT: Using only image context as message");
+    }
+
     if (!userMessageText) {
       console.error(
         "API_CHAT: No user message text found or content is not a string/expected structure"
@@ -141,9 +162,9 @@ export async function POST(req: NextRequest) {
       );
     }
     console.log(
-      "API_CHAT: Last user message text for embedding:",
-      userMessageText
-    ); // 3. Log user message text
+      "API_CHAT: Final message text for embedding:",
+      userMessageText.substring(0, 200) + (userMessageText.length > 200 ? "..." : "")
+    ); // 3. Log user message text (truncated for readability)
 
     // Detect question type for response formatting
     const detectQuestionType = (query: string): "conversational" | "specific" | "open-ended" => {
@@ -200,8 +221,18 @@ export async function POST(req: NextRequest) {
     };
 
     // Check if the query needs RAG search (avoid searching for simple greetings/conversational queries)
-    const shouldSearchRAG = (query: string): boolean => {
+    const shouldSearchRAG = (query: string, hasImageContext: boolean = false): boolean => {
       const questionType = detectQuestionType(query);
+      
+      // If we have image context, we should almost always search RAG unless it's a pure greeting
+      if (hasImageContext) {
+        const pureGreetings = ["hi", "hello", "hey", "thanks", "thank you", "bye", "goodbye"];
+        const normalizedQuery = query.toLowerCase().trim();
+        if (pureGreetings.includes(normalizedQuery) || normalizedQuery.length < 3) {
+          return false;
+        }
+        return true; // Search RAG for image-based queries
+      }
       
       if (questionType === "conversational") return false;
 
@@ -227,17 +258,29 @@ export async function POST(req: NextRequest) {
       return normalizedQuery.length > 8;
     };
 
-    const questionType = detectQuestionType(userMessageText);
-    const needsRAGSearch = shouldSearchRAG(userMessageText);
+    // For RAG search, use the original user query if we have image context
+    // This helps focus the search on the actual question rather than the entire image analysis
+    let searchQuery = userMessageText;
+    if (imageContext && userMessageText.includes("User question:")) {
+      const userQuestionMatch = userMessageText.match(/User question: (.+)$/);
+      if (userQuestionMatch) {
+        searchQuery = userQuestionMatch[1].trim();
+        console.log("API_CHAT: Extracted user question for search:", searchQuery);
+      }
+    }
+
+    const questionType = detectQuestionType(searchQuery);
+    const needsRAGSearch = shouldSearchRAG(searchQuery, !!imageContext);
     console.log("API_CHAT: Question type:", questionType);
     console.log("API_CHAT: Needs RAG search:", needsRAGSearch);
+    console.log("API_CHAT: Has image context:", !!imageContext);
 
     let chunks: DocumentChunk[] = [];
 
     if (needsRAGSearch) {
       const embeddingResponse = await openaiEmbeddings.embeddings.create({
         model: OPENAI_EMBEDDING_MODEL,
-        input: userMessageText, // Use the extracted string
+        input: searchQuery, // Use the focused search query
       });
       const queryEmbedding = embeddingResponse.data[0].embedding;
       console.log("API_CHAT: Generated query embedding"); // 4. Log embedding success
@@ -468,9 +511,9 @@ export async function POST(req: NextRequest) {
         additionalPages: source.additional_pages 
       })));
 
-    let promptTemplate = getSystemPromptTemplate(questionType);
+    let promptTemplate = getSystemPromptTemplate(questionType, !!imageContext);
     if (documentName) {
-      promptTemplate = getSystemPromptTemplateWithDoc(questionType).replace(
+      promptTemplate = getSystemPromptTemplateWithDoc(questionType, !!imageContext).replace(
         /{documentName}/g,
         documentName
       );
@@ -583,8 +626,11 @@ export async function POST(req: NextRequest) {
 
         try {
 
-          // Send initial data with deduplicated RAG sources
-          const initialPayload = { ragSources: deduplicatedSources };
+          // Send initial data with deduplicated RAG sources and image usage flag
+          const initialPayload = { 
+            ragSources: deduplicatedSources,
+            imageUsed: !!imageContext
+          };
           controller.enqueue(
             encoder.encode(
               `2:[${JSON.stringify(JSON.stringify(initialPayload))}]\n`
@@ -620,6 +666,7 @@ export async function POST(req: NextRequest) {
             const finalPayload = {
               ragSources: deduplicatedSources,
               groundingMetadata: groundingMetadata,
+              imageUsed: !!imageContext
             };
             controller.enqueue(
               encoder.encode(
