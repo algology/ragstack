@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
-import { X, FileText, Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { X, FileText, Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -104,7 +104,7 @@ function PDFViewerHeader() {
 }
 
 function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
-  const { state } = usePDFViewer();
+  const { state, navigateToCitationPage, jumpToCitationPage } = usePDFViewer();
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState<number>(1);
   const [scale, setScale] = useState<number>(1.4);
@@ -114,6 +114,7 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
   const [contentType, setContentType] = useState<string>('');
   const [textContent, setTextContent] = useState<string>('');
   const [pdfUrl, setPdfUrl] = useState<string>('');
+  const lastSyncedPageRef = useRef<number | null>(null);
 
   const loadContent = useCallback(async () => {
     if (!state.documentId) return;
@@ -157,6 +158,8 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
 
   // Load content when document ID changes
   useEffect(() => {
+    // Reset sync tracking when document changes
+    lastSyncedPageRef.current = null;
     loadContent();
   }, [loadContent]);
 
@@ -169,9 +172,25 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
       : 1;
     
     setPageNumber(targetPage);
+    lastSyncedPageRef.current = targetPage; // Track the initial page
     setPdfError(null);
     console.log(`PDF loaded successfully with ${numPages} pages, navigating to page ${targetPage}`);
   }, [state.pageNumber]);
+
+  // Sync local pageNumber state with context when citation navigation changes
+  useEffect(() => {
+    if (state.pageNumber && numPages > 0) {
+      // Only update if the context page is different from what we last synced
+      // and it's a valid page number
+      if (state.pageNumber !== lastSyncedPageRef.current && 
+          state.pageNumber > 0 && 
+          state.pageNumber <= numPages) {
+        console.log(`Citation navigation: updating page from ${pageNumber} to ${state.pageNumber}`);
+        setPageNumber(state.pageNumber);
+        lastSyncedPageRef.current = state.pageNumber;
+      }
+    }
+  }, [state.pageNumber, numPages]); // Removed pageNumber from dependencies to prevent loop
 
   const onDocumentLoadError = useCallback((error: Error) => {
     console.error('PDF load error:', error);
@@ -180,8 +199,9 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
 
   const changePage = useCallback((offset: number) => {
     setPageNumber(prevPageNumber => {
-      const newPageNumber = prevPageNumber + offset;
-      return Math.min(Math.max(newPageNumber, 1), numPages);
+      const newPageNumber = Math.min(Math.max(prevPageNumber + offset, 1), numPages);
+      lastSyncedPageRef.current = newPageNumber; // Track manual navigation
+      return newPageNumber;
     });
   }, [numPages]);
 
@@ -239,53 +259,105 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
       <div className="flex flex-col h-full">
         {/* PDF Controls */}
         {numPages > 0 && (
-          <div className="flex items-center justify-between p-2 border-b bg-muted/30">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={previousPage}
-                disabled={pageNumber <= 1}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronLeft className="h-3 w-3" />
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                {pageNumber} / {numPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={nextPage}
-                disabled={pageNumber >= numPages}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronRight className="h-3 w-3" />
-              </Button>
+          <div className="p-2 border-b bg-muted/30 space-y-2">
+            {/* Regular Page Navigation */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={previousPage}
+                  disabled={pageNumber <= 1}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {pageNumber} / {numPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={nextPage}
+                  disabled={pageNumber >= numPages}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={zoomOut}
+                  disabled={scale <= 0.5}
+                  className="h-8 w-8 p-0"
+                >
+                  <ZoomOut className="h-3 w-3" />
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {Math.round(scale * 100)}%
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={zoomIn}
+                  disabled={scale >= 3.0}
+                  className="h-8 w-8 p-0"
+                >
+                  <ZoomIn className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={zoomOut}
-                disabled={scale <= 0.5}
-                className="h-8 w-8 p-0"
-              >
-                <ZoomOut className="h-3 w-3" />
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                {Math.round(scale * 100)}%
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={zoomIn}
-                disabled={scale >= 3.0}
-                className="h-8 w-8 p-0"
-              >
-                <ZoomIn className="h-3 w-3" />
-              </Button>
-            </div>
+
+            {/* Citation Navigation Controls - only show if multiple citation pages */}
+            {state.citationPages.length > 1 && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-3 w-3 text-blue-600" />
+                  <span className="text-xs font-medium text-blue-600">Citation Pages:</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateToCitationPage('prev')}
+                    disabled={state.currentCitationIndex <= 0}
+                    className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-50"
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                  </Button>
+                  <span className="text-xs text-blue-600 font-medium">
+                    Page {state.citationPages[state.currentCitationIndex]} ({state.currentCitationIndex + 1} of {state.citationPages.length})
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigateToCitationPage('next')}
+                    disabled={state.currentCitationIndex >= state.citationPages.length - 1}
+                    className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-50"
+                  >
+                    <ChevronRight className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-blue-600">Jump to:</span>
+                  {state.citationPages.map((page, index) => (
+                    <Button
+                      key={page}
+                      variant={state.currentCitationIndex === index ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => jumpToCitationPage(page)}
+                      className={`h-6 px-2 text-xs ${
+                        state.currentCitationIndex === index 
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "text-blue-600 hover:bg-blue-50"
+                      }`}
+                    >
+                      {page}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

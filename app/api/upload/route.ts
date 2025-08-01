@@ -102,29 +102,90 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Process page chunks and create document chunks with page numbers
+    // 1. Process page chunks with page-boundary-aware chunking
+    // This prevents chunks from spanning multiple pages, improving citation accuracy
     const splitter = new RecursiveCharacterTextSplitter({
       chunkSize: CHUNK_SIZE,
       chunkOverlap: CHUNK_OVERLAP,
     });
     
-    // Store page-aware chunks with their page numbers
+    // Store page-aware chunks with their page numbers and metadata
     interface DocumentChunkWithPage {
       text: string;
       pageNumber: number;
+      chunkIndex: number; // Track chunk order within page for debugging
+      originalPageLength: number; // Store original page text length
     }
     
     const documentChunks: DocumentChunkWithPage[] = [];
     
+    console.log(`Upload API: Processing ${pageChunks.length} pages with page-boundary-aware chunking`);
+    
     for (const pageChunk of pageChunks) {
+      // Ensure pageNumber is always a valid positive integer
+      const validPageNumber = pageChunk.pageNumber && pageChunk.pageNumber > 0 
+        ? pageChunk.pageNumber 
+        : 1;
+      
+      const originalPageLength = pageChunk.text.length;
+      
+      // Split text within this page only - no cross-page chunks
       const pageTextChunks = await splitter.splitText(pageChunk.text);
-      for (const chunk of pageTextChunks) {
+      
+      console.log(`Upload API: Page ${validPageNumber}: ${originalPageLength} chars → ${pageTextChunks.length} chunks`);
+      
+      // Validate that we're not losing too much content due to chunking
+      const totalChunkLength = pageTextChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const contentRetention = (totalChunkLength / originalPageLength) * 100;
+      
+      if (contentRetention < 80) {
+        console.warn(`Upload API: Low content retention on page ${validPageNumber}: ${contentRetention.toFixed(1)}% (${totalChunkLength}/${originalPageLength} chars)`);
+      }
+      
+      pageTextChunks.forEach((chunk, pageChunkIndex) => {
+        // Additional validation: ensure chunk is meaningful
+        const trimmedChunk = chunk.trim();
+        if (trimmedChunk.length < 10) {
+          console.warn(`Upload API: Very short chunk on page ${validPageNumber}, index ${pageChunkIndex}: "${trimmedChunk}"`);
+        }
+        
         documentChunks.push({
           text: chunk,
-          pageNumber: pageChunk.pageNumber
+          pageNumber: validPageNumber,
+          chunkIndex: pageChunkIndex,
+          originalPageLength: originalPageLength
         });
+      });
+      
+      // Check for potential chunking issues
+      if (pageTextChunks.length === 0 && originalPageLength > 0) {
+        console.error(`Upload API: Page ${validPageNumber} with ${originalPageLength} chars produced no chunks!`);
+        // Create a fallback chunk to preserve content
+        documentChunks.push({
+          text: pageChunk.text.substring(0, CHUNK_SIZE),
+          pageNumber: validPageNumber,
+          chunkIndex: 0,
+          originalPageLength: originalPageLength
+        });
+      } else if (pageTextChunks.length > 10) {
+        console.warn(`Upload API: Page ${validPageNumber} produced ${pageTextChunks.length} chunks (may indicate very dense content)`);
       }
     }
+    
+    console.log(`Upload API: Page-boundary-aware chunking complete: ${documentChunks.length} total chunks from ${pageChunks.length} pages`);
+    
+    // Additional validation: check for potential page assignment errors
+    const pageChunkCounts = new Map<number, number>();
+    documentChunks.forEach(chunk => {
+      pageChunkCounts.set(chunk.pageNumber, (pageChunkCounts.get(chunk.pageNumber) || 0) + 1);
+    });
+    
+    console.log("Upload API: Chunk distribution by page:", 
+      Array.from(pageChunkCounts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([page, count]) => `Page ${page}: ${count} chunks`)
+        .join(', ')
+    );
 
     if (documentChunks.length === 0) {
       return NextResponse.json(
@@ -222,7 +283,8 @@ export async function POST(req: NextRequest) {
       // Sanitize the chunk content by removing NULL characters (\u0000)
       content: chunk.text.replace(/\u0000/g, ""),
       embedding: allEmbeddings[index],
-      page_number: chunk.pageNumber,
+      // Ensure page_number is never null - default to 1 if not provided
+      page_number: chunk.pageNumber || 1,
       // TODO: Add user_id here as well
       // user_id: userId
     }));

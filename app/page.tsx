@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import React, { type FC } from "react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
@@ -46,7 +46,8 @@ import {
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { FlowingPrompts } from "@/components/flowing-prompts";
+import { PromptDropdown, WINE_PRODUCTION_PROMPTS, VINEYARD_MANAGEMENT_PROMPTS } from "@/components/prompt-dropdown";
+import { Wine, Grape } from "lucide-react";
 
 interface DocumentChunk {
   id?: string; // Chunk ID
@@ -259,28 +260,14 @@ export default function ChatPage() {
 // Split-screen layout component
 const ChatPageLayout: FC = () => {
   const { state } = usePDFViewer();
-  const thread = useThread();
-  
-  // Check if we should show the prompt sidebar (only when chat is empty)
-  const showPromptSidebar = thread.messages.length === 0;
 
   return (
     <div className="flex h-screen bg-[#191a1a] text-foreground">
-      {/* Sidebar - only show when chat is empty */}
-      {showPromptSidebar && (
-        <div className="absolute left-[15vw] top-80 w-80 z-10">
-          <FlowingPrompts />
-        </div>
-      )}
-
       {/* Main Chat Area with Thread Context */}
       <div 
         className={cn(
           "flex flex-col transition-all duration-300 ease-in-out",
-          showPromptSidebar && !state.isOpen ? "flex-1" : // Full remaining width when sidebar is shown and PDF closed
-          showPromptSidebar && state.isOpen ? "w-[calc(100%-40%-320px)]" : // Reduced width when both sidebar and PDF are open
-          !showPromptSidebar && state.isOpen ? "w-[60%]" : // Normal PDF layout when no sidebar
-          "w-full" // Full width when no sidebar and no PDF
+          state.isOpen ? "w-[60%]" : "w-full" // Full width when PDF closed, 60% when PDF open
         )}
       >
         <ThreadPrimitive.Root
@@ -385,6 +372,8 @@ const ThreadWelcome: FC = () => {
 const Composer: FC = () => {
   const { isSearchEnabled, setIsSearchEnabled } = useChatPageContext();
   const thread = useThread();
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   
   // Check if there are any messages in the conversation
   const hasMessages = thread.messages.length > 0;
@@ -397,9 +386,61 @@ const Composer: FC = () => {
     return hasMessages ? "Ask follow-up.." : "Ask a question..";
   };
 
+  const handleDropdownToggle = (dropdownId: string) => {
+    setActiveDropdown(activeDropdown === dropdownId ? null : dropdownId);
+  };
+
+  const handlePromptSelect = () => {
+    setActiveDropdown(null);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        composerRef.current &&
+        !composerRef.current.contains(event.target as Node)
+      ) {
+        setActiveDropdown(null);
+      }
+    };
+
+    if (activeDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [activeDropdown]);
+
   return (
-    <div className="w-full rounded-full p-2">
+    <div ref={composerRef} className="w-full rounded-full p-2 relative">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-background px-2.5 shadow-sm transition-colors ease-in">
+        {/* Show prompt dropdowns only when chat is empty */}
+        {!hasMessages && (
+          <>
+            <PromptDropdown
+              prompts={WINE_PRODUCTION_PROMPTS}
+              title="Wine Production"
+              icon={Wine}
+              ariaLabel="Show wine production prompts"
+              isOpen={activeDropdown === 'wine'}
+              onToggle={() => handleDropdownToggle('wine')}
+              onPromptSelect={handlePromptSelect}
+            />
+            <PromptDropdown
+              prompts={VINEYARD_MANAGEMENT_PROMPTS}
+              title="Vineyard Management"
+              icon={Grape}
+              ariaLabel="Show vineyard management prompts"
+              isOpen={activeDropdown === 'vineyard'}
+              onToggle={() => handleDropdownToggle('vineyard')}
+              onPromptSelect={handlePromptSelect}
+            />
+          </>
+        )}
+        
         <TooltipIconButton
           tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
           variant="ghost"
@@ -425,6 +466,51 @@ const Composer: FC = () => {
           <ComposerAction />
         </div>
       </ComposerPrimitive.Root>
+      
+      {/* Full-width dropdown positioned below the entire input bar */}
+      {!hasMessages && activeDropdown && (
+        <div className="absolute left-0 right-0 top-full mt-2 bg-background border border-border rounded-lg shadow-lg z-50 overflow-hidden">
+          <div className="p-3 border-b border-border bg-muted/30">
+            <div className="flex items-center gap-2">
+              {activeDropdown === 'wine' ? (
+                <>
+                  <Wine className="size-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">Wine Production</span>
+                </>
+              ) : (
+                <>
+                  <Grape className="size-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">Vineyard Management</span>
+                </>
+              )}
+            </div>
+          </div>
+          
+          <div className="max-h-64 overflow-y-auto">
+            {(activeDropdown === 'wine' ? WINE_PRODUCTION_PROMPTS : VINEYARD_MANAGEMENT_PROMPTS).map((prompt, index) => (
+              <ThreadPrimitive.Suggestion
+                key={index}
+                prompt={prompt}
+                method="replace"
+                autoSend
+                onClick={handlePromptSelect}
+                className={cn(
+                  "w-full text-left px-3 py-2.5 text-sm text-foreground",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  "transition-colors duration-150 ease-in-out",
+                  "border-b border-border/50 last:border-b-0",
+                  "cursor-pointer block"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-2" />
+                  <span className="flex-1 leading-relaxed">{prompt}</span>
+                </div>
+              </ThreadPrimitive.Suggestion>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -493,9 +579,22 @@ const Citation: FC<{
     } else if (isDocumentSource && source?.documentId && source?.name) {
       // Parse document ID as number - for now we'll use a simple approach
       const docId = parseInt(source.documentId);
-      console.log("Opening PDF viewer with docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber);
+      
+      // Collect all relevant pages for this citation
+      const citationPages = [];
+      if (source.pageNumber) {
+        citationPages.push(source.pageNumber);
+      }
+      if (source.additionalPages && source.additionalPages.length > 0) {
+        citationPages.push(...source.additionalPages);
+      }
+      
+      // Remove duplicates and sort
+      const uniqueSortedPages = [...new Set(citationPages)].sort((a, b) => a - b);
+      
+      console.log("Opening PDF viewer with docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber, "citationPages:", uniqueSortedPages);
       if (!isNaN(docId)) {
-        openPDFViewer(docId, source.name, source.pageNumber);
+        openPDFViewer(docId, source.name, source.pageNumber, uniqueSortedPages);
       } else {
         console.error("Invalid document ID:", source.documentId);
       }
@@ -525,11 +624,13 @@ const Citation: FC<{
       >
         <span className="relative select-none align-middle -top-px font-sans text-base text-textMain dark:text-textMainDark selection:bg-super/50 selection:text-textMain dark:selection:bg-superDuper/10 dark:selection:text-superDark">
           <span
-            className={`min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums py-[0.1875rem] px-[0.3rem] border ${
+            className={`min-w-[1rem] rounded-[0.3125rem] text-center align-middle font-mono text-[0.6rem] tabular-nums py-[0.1875rem] px-[0.3rem] border relative ${
               isWebSource
                 ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-700"
                 : isDocumentSource
-                ? "bg-green-600 border-green-500 text-white hover:bg-green-700"
+                ? `bg-green-600 border-green-500 text-white hover:bg-green-700 ${
+                    source?.pageNumber ? 'ring-1 ring-green-400/50' : ''
+                  }`
                 : "hover:bg-super dark:hover:bg-superDark dark:hover:text-backgroundDark hover:text-white border-borderMain/50 dark:border-borderMainDark/50 bg-offsetPlus dark:bg-offsetPlusDark"
             }`}
           >
@@ -562,7 +663,14 @@ const Citation: FC<{
           </span>
           {isDocumentSource && (
             <span className="text-green-400 text-xs mb-1 block">
-              Click to view document
+              {source?.pageNumber 
+                ? `Click to view page ${source.pageNumber}${
+                    source.additionalPages && source.additionalPages.length > 0 
+                      ? `, ${source.additionalPages.join(", ")}`
+                      : ""
+                  }`
+                : "Click to view document"
+              }
             </span>
           )}
           {isWebSource && source?.uri && (
@@ -898,9 +1006,22 @@ const PerplexityAssistantMessage: FC = () => {
                         console.log("Source card clicked:", source);
                         if (source.type === "rag" && source.documentId && source.name) {
                           const docId = parseInt(source.documentId);
-                          console.log("Opening PDF viewer from source card - docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber);
+                          
+                          // Collect all relevant pages for this citation
+                          const citationPages = [];
+                          if (source.pageNumber) {
+                            citationPages.push(source.pageNumber);
+                          }
+                          if (source.additionalPages && source.additionalPages.length > 0) {
+                            citationPages.push(...source.additionalPages);
+                          }
+                          
+                          // Remove duplicates and sort
+                          const uniqueSortedPages = [...new Set(citationPages)].sort((a, b) => a - b);
+                          
+                          console.log("Opening PDF viewer from source card - docId:", docId, "name:", source.name, "pageNumber:", source.pageNumber, "citationPages:", uniqueSortedPages);
                           if (!isNaN(docId)) {
-                            openPDFViewer(docId, source.name, source.pageNumber);
+                            openPDFViewer(docId, source.name, source.pageNumber, uniqueSortedPages);
                           } else {
                             console.error("Invalid document ID from source card:", source.documentId);
                           }

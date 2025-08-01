@@ -298,42 +298,154 @@ export async function POST(req: NextRequest) {
       console.log("API_CHAT: Skipping RAG search for conversational query");
     }
 
-    // Deduplicate chunks by document, keeping the HIGHEST SCORING chunk per document
-    // Also collect ALL page numbers where matches were found for multi-page reference tracking
-    const uniqueDocuments = new Map<number, DocumentChunk>();
+    // Smart deduplication: prioritize page relevance over single highest score
+    // This improves citation accuracy by considering page-level content quality
     const documentPages = new Map<number, Set<number>>(); // Track all pages per document
+    const documentChunkAnalysis = new Map<number, { chunks: DocumentChunk[], avgScore: number }>(); // Track all chunks per document for analysis
+    const pageScoreAnalysis = new Map<number, Map<number, { chunks: DocumentChunk[], avgScore: number, totalScore: number }>>(); // Track page-level scores
     
     chunks?.forEach((chunk) => {
       const docId = chunk.document_id;
-      const existing = uniqueDocuments.get(docId);
       
-      // Track this page for the document
+      // Initialize tracking structures
       if (!documentPages.has(docId)) {
         documentPages.set(docId, new Set());
-      }
-      if (chunk.page_number) {
-        documentPages.get(docId)!.add(chunk.page_number);
+        documentChunkAnalysis.set(docId, { chunks: [], avgScore: 0 });
+        pageScoreAnalysis.set(docId, new Map());
       }
       
-      // Keep the highest scoring chunk as the primary one
-      if (!existing || chunk.similarity > existing.similarity) {
-        uniqueDocuments.set(docId, chunk);
+      if (chunk.page_number) {
+        documentPages.get(docId)!.add(chunk.page_number);
+        
+        // Track page-level scores
+        const docPageScores = pageScoreAnalysis.get(docId)!;
+        if (!docPageScores.has(chunk.page_number)) {
+          docPageScores.set(chunk.page_number, { chunks: [], avgScore: 0, totalScore: 0 });
+        }
+        const pageData = docPageScores.get(chunk.page_number)!;
+        pageData.chunks.push(chunk);
+        pageData.totalScore += chunk.similarity;
+      }
+      
+      // Add to overall document analysis
+      const analysis = documentChunkAnalysis.get(docId)!;
+      analysis.chunks.push(chunk);
+    });
+    
+    // Calculate page-level averages and select best representative chunk per document
+    const uniqueDocuments = new Map<number, DocumentChunk>();
+    
+    pageScoreAnalysis.forEach((pageScores, docId) => {
+      let bestPage: number | null = null;
+      let bestPageScore = 0;
+      let bestChunk: DocumentChunk | null = null;
+      
+      // Calculate average scores for each page
+      pageScores.forEach((pageData, pageNumber) => {
+        pageData.avgScore = pageData.totalScore / pageData.chunks.length;
+        
+        // Find the best page by considering both average score and chunk count
+        // Pages with more high-quality chunks are preferred
+        const pageQualityScore = pageData.avgScore * Math.min(pageData.chunks.length, 3); // Cap boost at 3 chunks
+        
+        if (pageQualityScore > bestPageScore) {
+          bestPageScore = pageQualityScore;
+          bestPage = pageNumber;
+          // From the best page, select the highest scoring chunk
+          bestChunk = pageData.chunks.reduce((prev, current) => 
+            (current.similarity > prev.similarity) ? current : prev
+          );
+        }
+      });
+      
+      if (bestChunk) {
+        uniqueDocuments.set(docId, bestChunk);
+        console.log(`API_CHAT: Selected primary chunk for document ID ${docId}: Page ${bestPage} (quality score: ${bestPageScore.toFixed(3)})`);
+      } else {
+        // Fallback to original logic if no page-based selection worked
+        const analysis = documentChunkAnalysis.get(docId);
+        if (analysis && analysis.chunks.length > 0) {
+          const fallbackChunk = analysis.chunks.reduce((prev, current) => 
+            (current.similarity > prev.similarity) ? current : prev
+          );
+          uniqueDocuments.set(docId, fallbackChunk);
+          console.log(`API_CHAT: Fallback selection for document ID ${docId}: Single highest score ${fallbackChunk.similarity.toFixed(3)}`);
+        }
       }
     });
     
-    // Add additional page information to the primary chunks
+    // Calculate average scores for logging
+    documentChunkAnalysis.forEach((analysis) => {
+      analysis.avgScore = analysis.chunks.reduce((sum, chunk) => sum + chunk.similarity, 0) / analysis.chunks.length;
+    });
+    
+    // Add additional page information with improved relevance-based ordering
     const deduplicatedSources = Array.from(uniqueDocuments.values()).map(chunk => {
       const allPages = documentPages.get(chunk.document_id);
-      if (allPages && allPages.size > 1) {
-        // Remove the primary page from additional pages and sort the rest
-        const additionalPages = Array.from(allPages)
-          .filter(page => page !== chunk.page_number)
-          .sort((a, b) => a - b);
+      const analysis = documentChunkAnalysis.get(chunk.document_id);
+      const pageScores = pageScoreAnalysis.get(chunk.document_id);
+      
+      if (allPages && allPages.size > 1 && pageScores) {
+        // Create relevance-weighted page ordering instead of just numerical order
+        const pageRelevanceScores = Array.from(allPages).map(pageNum => {
+          const pageData = pageScores.get(pageNum);
+          return {
+            page: pageNum,
+            avgScore: pageData?.avgScore || 0,
+            chunkCount: pageData?.chunks.length || 0,
+            qualityScore: (pageData?.avgScore || 0) * Math.min(pageData?.chunks.length || 0, 3),
+            isPrimary: pageNum === chunk.page_number
+          };
+        }).sort((a, b) => {
+          // Primary page always first, then by quality score, then by page number
+          if (a.isPrimary) return -1;
+          if (b.isPrimary) return 1;
+          if (Math.abs(a.qualityScore - b.qualityScore) > 0.05) {
+            return b.qualityScore - a.qualityScore; // Higher quality first
+          }
+          return a.page - b.page; // Then by page order
+        });
+        
+        // Extract additional pages (excluding primary) in relevance order
+        const additionalPages = pageRelevanceScores
+          .filter(p => !p.isPrimary)
+          .map(p => p.page);
+        
+        // Enhanced logging with relevance-based analysis
+        const allPagesArray = Array.from(allPages).sort((a, b) => a - b);
+        const pageGaps = [];
+        for (let i = 1; i < allPagesArray.length; i++) {
+          const gap = allPagesArray[i] - allPagesArray[i-1];
+          if (gap > 2) {
+            pageGaps.push(`${allPagesArray[i-1]}-${allPagesArray[i]} (gap: ${gap})`);
+          }
+        }
+        
+        console.log(`API_CHAT: Citation analysis for document "${chunk.name}" (ID: ${chunk.document_id}):`);
+        console.log(`  - Primary page: ${chunk.page_number} (score: ${chunk.similarity.toFixed(3)})`);
+        console.log(`  - All relevant pages (numerical): [${allPagesArray.join(', ')}]`);
+        console.log(`  - Pages by relevance: [${pageRelevanceScores.map(p => `${p.page}(${p.qualityScore.toFixed(2)})`).join(', ')}]`);
+        console.log(`  - Additional pages (relevance order): [${additionalPages.join(', ')}]`);
+        console.log(`  - Total chunks found: ${analysis?.chunks.length || 0}, Avg score: ${analysis?.avgScore.toFixed(3) || 'N/A'}`);
+        if (pageGaps.length > 0) {
+          console.log(`  - ⚠️  Large page gaps detected: ${pageGaps.join(', ')}`);
+        }
+        
+        // Validate the new relevance-based approach
+        const secondBestPage = pageRelevanceScores.find(p => !p.isPrimary);
+        const primaryPageData = pageRelevanceScores.find(p => p.isPrimary);
+        if (secondBestPage && primaryPageData && secondBestPage.qualityScore > primaryPageData.qualityScore) {
+          console.log(`  - ℹ️  Note: Page ${secondBestPage.page} has higher quality score (${secondBestPage.qualityScore.toFixed(3)}) but primary was chosen by single-chunk rule`);
+        }
         
         return {
           ...chunk,
           additional_pages: additionalPages.length > 0 ? additionalPages : undefined
         };
+      } else {
+        console.log(`API_CHAT: Single-page citation for document "${chunk.name}" (ID: ${chunk.document_id}):`);
+        console.log(`  - Page: ${chunk.page_number} (score: ${chunk.similarity.toFixed(3)})`);
+        console.log(`  - Total chunks found: ${analysis?.chunks.length || 0}, Avg score: ${analysis?.avgScore.toFixed(3) || 'N/A'}`);
       }
       return chunk;
     });
@@ -441,8 +553,25 @@ export async function POST(req: NextRequest) {
     const currentPrompt =
       chatMessages[chatMessages.length - 1]?.content || "Hello";
 
-    // Stream the response
-    const result = await chat.sendMessageStream(currentPrompt);
+    // Stream the response with error handling for search retrieval
+    let result;
+    try {
+      result = await chat.sendMessageStream(currentPrompt);
+      console.log(`API_CHAT: Successfully started streaming with search enabled: ${enableSearch}`);
+    } catch (error) {
+      console.error("API_CHAT: Error with Google Search Retrieval:", error);
+      // Fallback: retry without search tools if search-enabled request fails
+      if (enableSearch) {
+        console.log("API_CHAT: Retrying without search tools...");
+        const fallbackChat = model.startChat({
+          history: history,
+          tools: undefined,
+        });
+        result = await fallbackChat.sendMessageStream(currentPrompt);
+      } else {
+        throw error;
+      }
+    }
 
     console.log("API_CHAT: Creating proper AI SDK stream response");
     console.log(`API_CHAT: Using ${deduplicatedSources.length} deduplicated sources from ${chunks?.length || 0} total chunks`);
