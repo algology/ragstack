@@ -121,6 +121,7 @@ export async function POST(req: NextRequest) {
       documentId,
       documentName,
       messagesLength: messages.length,
+      enableSearch,
       hasImageContext: !!imageContext,
       imageContextPreview: imageContext ? imageContext.substring(0, 100) + "..." : null,
     }); // 2. Log parsed body
@@ -589,7 +590,7 @@ export async function POST(req: NextRequest) {
     // Start chat with history
     const chat = model.startChat({
       history: history,
-      tools: enableSearch ? [{ googleSearchRetrieval: {} }] : undefined,
+      tools: enableSearch ? [{ googleSearch: {} }] : undefined,
     });
 
     // Get the last message as the current prompt
@@ -602,7 +603,8 @@ export async function POST(req: NextRequest) {
       result = await chat.sendMessageStream(currentPrompt);
       console.log(`API_CHAT: Successfully started streaming with search enabled: ${enableSearch}`);
     } catch (error) {
-      console.error("API_CHAT: Error with Google Search Retrieval:", error);
+      console.error("API_CHAT: Error with Google Search:", error);
+      console.error("API_CHAT: Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
       // Fallback: retry without search tools if search-enabled request fails
       if (enableSearch) {
         console.log("API_CHAT: Retrying without search tools...");
@@ -611,6 +613,7 @@ export async function POST(req: NextRequest) {
           tools: undefined,
         });
         result = await fallbackChat.sendMessageStream(currentPrompt);
+        console.log("API_CHAT: Fallback without search tools successful");
       } else {
         throw error;
       }

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
+import { PromptManager } from "@/components/admin/prompt-manager";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 import Image from "next/image";
@@ -403,6 +404,8 @@ export default function AdminPage() {
               )}
             </CardContent>
           </Card>
+
+          <PromptManager />
         </div>
       </main>
     </div>

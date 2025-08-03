@@ -45,9 +45,9 @@ import {
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { PromptDropdown, WINE_PRODUCTION_PROMPTS, VINEYARD_MANAGEMENT_PROMPTS } from "@/components/prompt-dropdown";
+import { usePrompts } from "@/components/prompt-dropdown";
 import { ImageUploadModal } from "@/components/image-upload-modal";
-import { Wine, Grape } from "lucide-react";
+import { Wine, Grape, Search } from "lucide-react";
 
 interface DocumentChunk {
   id?: string; // Chunk ID
@@ -100,6 +100,7 @@ export default function ChatPage() {
     new Map()
   );
   
+  
   // Image context state management
   const [uploadedImage, setUploadedImage] = useState<{
     fileName: string;
@@ -125,6 +126,7 @@ export default function ChatPage() {
         ...body,
         imageContextPreview: body.imageContext ? body.imageContext.substring(0, 100) + "..." : null
       });
+      console.log("CLIENT: Current isSearchEnabled state:", isSearchEnabled);
       return body;
     },
     [currentChatContextId, currentChatContextName, isSearchEnabled, uploadedImage]
@@ -392,7 +394,7 @@ const ThreadScrollToBottom: FC = () => {
 const ThreadWelcome: FC = () => {
   return (
     <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
-      <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-12 px-4">
+      <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-8 px-4">
         <div className="flex w-full flex-grow flex-col items-center justify-center">
           <Image
             src="/logo2.png"
@@ -408,7 +410,172 @@ const ThreadWelcome: FC = () => {
             <Composer />
           </div>
         </div>
+        {/* Category buttons positioned underneath the chatbot */}
+        <CategoryButtons />
       </div>
+    </div>
+  );
+};
+
+const CategoryButtons: FC = () => {
+  const thread = useThread();
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  
+  // Prompts data from API
+  const { prompts: apiPrompts } = usePrompts();
+  
+  // Check if there are any messages in the conversation
+  const hasMessages = thread.messages.length > 0;
+
+  const handleDropdownToggle = (dropdownId: string) => {
+    setActiveDropdown(activeDropdown === dropdownId ? null : dropdownId);
+  };
+
+  const handlePromptSelect = () => {
+    setActiveDropdown(null);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setActiveDropdown(null);
+      }
+    };
+
+    if (activeDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [activeDropdown]);
+  
+  // Only show category buttons when chat is empty
+  if (hasMessages) return null;
+
+  const categories = [
+    {
+      id: 'wine',
+      title: 'Winemaking',
+      icon: Wine,
+      prompts: apiPrompts.wine_production,
+      description: 'Explore wine production techniques and processes'
+    },
+    {
+      id: 'vineyard',
+      title: 'Viticulture',
+      icon: Grape,
+      prompts: apiPrompts.vineyard_management,
+      description: 'Learn about vineyard management practices'
+    },
+    {
+      id: 'research',
+      title: 'New Research',
+      icon: Search,
+      prompts: apiPrompts.recent_research,
+      description: 'Discover latest research and developments'
+    }
+  ];
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+        {categories.map((category) => {
+          const IconComponent = category.icon;
+          const isActive = activeDropdown === category.id;
+          
+          return (
+            <div key={category.id} className="relative">
+              <button
+                onClick={() => handleDropdownToggle(category.id)}
+                className={cn(
+                  "w-full p-3 rounded-lg border transition-all duration-200",
+                  "bg-zinc-800/50 border-zinc-600/50 hover:bg-zinc-700/50 hover:border-zinc-500/50",
+                  "text-left group cursor-pointer min-h-[60px]",
+                  isActive && "bg-zinc-700/50 border-zinc-500/50"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 p-1.5 rounded-md bg-zinc-700/50 group-hover:bg-zinc-600/50 transition-colors">
+                    <IconComponent className="w-4 h-4 text-zinc-300" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-medium text-white">
+                      {category.title}
+                    </h3>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <svg
+                      className={cn(
+                        "w-4 h-4 text-zinc-400 transition-transform duration-200",
+                        isActive && "rotate-180"
+                      )}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* Full-width dropdown positioned below the entire category buttons container */}
+      {activeDropdown && (
+        <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-700 border border-zinc-600 rounded-lg shadow-lg z-50 overflow-hidden">
+          <div className="p-3 border-b border-zinc-600 bg-zinc-600/30">
+            <div className="flex items-center gap-2">
+              {(() => {
+                const activeCategory = categories.find(cat => cat.id === activeDropdown);
+                const IconComponent = activeCategory?.icon;
+                return (
+                  <>
+                    {IconComponent && <IconComponent className="size-4 text-muted-foreground" />}
+                    <span className="text-sm font-medium text-foreground">{activeCategory?.title}</span>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+          
+          <div className="max-h-64 overflow-y-auto">
+            {(() => {
+              const activeCategory = categories.find(cat => cat.id === activeDropdown);
+              return activeCategory?.prompts.map((prompt: string, index: number) => (
+                <ThreadPrimitive.Suggestion
+                  key={index}
+                  prompt={prompt}
+                  method="replace"
+                  autoSend
+                  onClick={handlePromptSelect}
+                  className={cn(
+                    "w-full text-left px-3 py-2.5 text-sm text-foreground",
+                    "hover:bg-accent hover:text-accent-foreground",
+                    "transition-colors duration-150 ease-in-out",
+                    "border-b border-border/50 last:border-b-0",
+                    "cursor-pointer block"
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-2" />
+                    <span className="flex-1 leading-relaxed">{prompt}</span>
+                  </div>
+                </ThreadPrimitive.Suggestion>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -416,7 +583,6 @@ const ThreadWelcome: FC = () => {
 const Composer: FC = () => {
   const { isSearchEnabled, setIsSearchEnabled, uploadedImage, setUploadedImage } = useChatPageContext();
   const thread = useThread();
-  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [showImageUpload, setShowImageUpload] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -432,13 +598,6 @@ const Composer: FC = () => {
     return hasMessages ? "Ask follow-up.." : "Ask a question..";
   };
 
-  const handleDropdownToggle = (dropdownId: string) => {
-    setActiveDropdown(activeDropdown === dropdownId ? null : dropdownId);
-  };
-
-  const handlePromptSelect = () => {
-    setActiveDropdown(null);
-  };
 
   const handleImageUpload = async (file: File, description?: string) => {
     try {
@@ -483,67 +642,27 @@ const Composer: FC = () => {
     }
   };
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        composerRef.current &&
-        !composerRef.current.contains(event.target as Node)
-      ) {
-        setActiveDropdown(null);
-      }
-    };
-
-    if (activeDropdown) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [activeDropdown]);
 
   return (
     <div ref={composerRef} className="w-full rounded-full p-2 relative">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-zinc-600 bg-zinc-700 px-2.5 shadow-sm transition-colors ease-in">
-        {/* Show prompt dropdowns only when chat is empty */}
+        {/* Show camera upload only when chat is empty */}
         {!hasMessages && (
-          <>
-            <PromptDropdown
-              prompts={WINE_PRODUCTION_PROMPTS}
-              title="Wine Production"
-              icon={Wine}
-              ariaLabel="Show wine production prompts"
-              isOpen={activeDropdown === 'wine'}
-              onToggle={() => handleDropdownToggle('wine')}
-              onPromptSelect={handlePromptSelect}
-            />
-            <PromptDropdown
-              prompts={VINEYARD_MANAGEMENT_PROMPTS}
-              title="Vineyard Management"
-              icon={Grape}
-              ariaLabel="Show vineyard management prompts"
-              isOpen={activeDropdown === 'vineyard'}
-              onToggle={() => handleDropdownToggle('vineyard')}
-              onPromptSelect={handlePromptSelect}
-            />
-            
-            <div className="relative">
-              <TooltipIconButton
-                tooltip="Upload Image"
-                variant="ghost"
-                className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
-                onClick={() => setShowImageUpload(true)}
-              >
-                <Camera className="!size-5" />
-              </TooltipIconButton>
-              {uploadedImage && (
-                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                  1
-                </div>
-              )}
-            </div>
-          </>
+          <div className="relative">
+            <TooltipIconButton
+              tooltip="Upload Image"
+              variant="ghost"
+              className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
+              onClick={() => setShowImageUpload(true)}
+            >
+              <Camera className="!size-5" />
+            </TooltipIconButton>
+            {uploadedImage && (
+              <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                1
+              </div>
+            )}
+          </div>
         )}
         
         <TooltipIconButton
@@ -555,14 +674,17 @@ const Composer: FC = () => {
               ? "text-blue-500 hover:bg-blue-500/10"
               : "text-muted-foreground hover:text-foreground hover:bg-accent"
           )}
-          onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+          onClick={() => {
+            console.log("CLIENT: Toggling search from", isSearchEnabled, "to", !isSearchEnabled);
+            setIsSearchEnabled(!isSearchEnabled);
+          }}
         >
           <GlobeIcon className="!size-5" />
         </TooltipIconButton>
 
         <ComposerPrimitive.Input
           ref={inputRef}
-          rows={1}
+          rows={3}
           autoFocus
           placeholder={getPlaceholderText()}
           className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-foreground"
@@ -572,51 +694,6 @@ const Composer: FC = () => {
           <ComposerAction />
         </div>
       </ComposerPrimitive.Root>
-      
-      {/* Full-width dropdown positioned below the entire input bar */}
-      {!hasMessages && activeDropdown && (
-        <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-700 border border-zinc-600 rounded-lg shadow-lg z-50 overflow-hidden">
-          <div className="p-3 border-b border-zinc-600 bg-zinc-600/30">
-            <div className="flex items-center gap-2">
-              {activeDropdown === 'wine' ? (
-                <>
-                  <Wine className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground">Wine Production</span>
-                </>
-              ) : (
-                <>
-                  <Grape className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground">Vineyard Management</span>
-                </>
-              )}
-            </div>
-          </div>
-          
-          <div className="max-h-64 overflow-y-auto">
-            {(activeDropdown === 'wine' ? WINE_PRODUCTION_PROMPTS : VINEYARD_MANAGEMENT_PROMPTS).map((prompt, index) => (
-              <ThreadPrimitive.Suggestion
-                key={index}
-                prompt={prompt}
-                method="replace"
-                autoSend
-                onClick={handlePromptSelect}
-                className={cn(
-                  "w-full text-left px-3 py-2.5 text-sm text-foreground",
-                  "hover:bg-accent hover:text-accent-foreground",
-                  "transition-colors duration-150 ease-in-out",
-                  "border-b border-border/50 last:border-b-0",
-                  "cursor-pointer block"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-2" />
-                  <span className="flex-1 leading-relaxed">{prompt}</span>
-                </div>
-              </ThreadPrimitive.Suggestion>
-            ))}
-          </div>
-        </div>
-      )}
       
       {/* Image Upload Modal */}
       <ImageUploadModal
