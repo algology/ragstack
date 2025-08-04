@@ -33,21 +33,21 @@ import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 
 import {
   ArrowDownIcon,
-  ArrowRightIcon,
   ArrowUpIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
-  FileText,
   GlobeIcon,
   RefreshCwIcon,
+  Camera,
 } from "lucide-react";
 
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { PromptDropdown, WINE_PRODUCTION_PROMPTS, VINEYARD_MANAGEMENT_PROMPTS } from "@/components/prompt-dropdown";
-import { Wine, Grape } from "lucide-react";
+import { usePrompts } from "@/components/prompt-dropdown";
+import { ImageUploadModal } from "@/components/image-upload-modal";
+import { Wine, Grape, Search } from "lucide-react";
 
 interface DocumentChunk {
   id?: string; // Chunk ID
@@ -99,17 +99,37 @@ export default function ChatPage() {
   const [messageGrounding, setMessageGrounding] = useState<MessageGroundingMap>(
     new Map()
   );
+  
+  
+  // Image context state management
+  const [uploadedImage, setUploadedImage] = useState<{
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null>(null);
 
   const chatRuntimeBody = useMemo(
-    () => ({
-      documentId: currentChatContextId,
-      documentName:
-        currentChatContextName === "All Documents"
-          ? undefined
-          : currentChatContextName,
-      enableSearch: isSearchEnabled,
-    }),
-    [currentChatContextId, currentChatContextName, isSearchEnabled]
+    () => {
+      const body = {
+        documentId: currentChatContextId,
+        documentName:
+          currentChatContextName === "All Documents"
+            ? undefined
+            : currentChatContextName,
+        enableSearch: isSearchEnabled,
+        imageContext: uploadedImage?.imageContext,
+      };
+      console.log("CLIENT: Chat runtime body created:", {
+        ...body,
+        imageContextPreview: body.imageContext ? body.imageContext.substring(0, 100) + "..." : null
+      });
+      console.log("CLIENT: Current isSearchEnabled state:", isSearchEnabled);
+      return body;
+    },
+    [currentChatContextId, currentChatContextName, isSearchEnabled, uploadedImage]
   );
 
   const runtime = useChatRuntime({
@@ -183,6 +203,12 @@ export default function ChatPage() {
                     groundingToSet
                   );
                 }
+
+                // Check if image was used and clear it
+                if (parsedPayload.imageUsed && uploadedImage) {
+                  console.log("CLIENT: Image was used in this request, clearing uploaded image");
+                  setUploadedImage(null);
+                }
               }
             }
           } else {
@@ -242,8 +268,10 @@ export default function ChatPage() {
       messageGrounding,
       isSearchEnabled,
       setIsSearchEnabled,
+      uploadedImage,
+      setUploadedImage,
     }),
-    [messageSources, messageGrounding, isSearchEnabled]
+    [messageSources, messageGrounding, isSearchEnabled, uploadedImage]
   ); // Removed setIsSearchEnabled from deps as it's stable
 
   return (
@@ -318,6 +346,22 @@ interface ChatPageContextType {
   messageGrounding: MessageGroundingMap;
   isSearchEnabled: boolean;
   setIsSearchEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  uploadedImage: {
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null;
+  setUploadedImage: React.Dispatch<React.SetStateAction<{
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    imageContext: string;
+    aiAnalysis: string;
+    userDescription?: string;
+  } | null>>;
 }
 
 const ChatPageContext = React.createContext<ChatPageContextType>({
@@ -325,6 +369,8 @@ const ChatPageContext = React.createContext<ChatPageContextType>({
   messageGrounding: new Map(),
   isSearchEnabled: false,
   setIsSearchEnabled: () => {},
+  uploadedImage: null,
+  setUploadedImage: () => {},
 });
 
 function useChatPageContext() {
@@ -348,7 +394,7 @@ const ThreadScrollToBottom: FC = () => {
 const ThreadWelcome: FC = () => {
   return (
     <div className="flex h-full w-full items-center justify-center bg-[#191a1a] text-white">
-      <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-12 px-4">
+      <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col gap-8 px-4">
         <div className="flex w-full flex-grow flex-col items-center justify-center">
           <Image
             src="/logo2.png"
@@ -360,31 +406,27 @@ const ThreadWelcome: FC = () => {
           />
         </div>
         <div className="flex justify-center"> {/* Center the chat box */}
-          <div className="w-full max-w-xl"> {/* Centered with better proportions */}
+          <div className="w-full max-w-4xl"> {/* Centered with longer proportions */}
             <Composer />
           </div>
         </div>
+        {/* Category buttons positioned underneath the chatbot */}
+        <CategoryButtons />
       </div>
     </div>
   );
 };
 
-const Composer: FC = () => {
-  const { isSearchEnabled, setIsSearchEnabled } = useChatPageContext();
+const CategoryButtons: FC = () => {
   const thread = useThread();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  
+  // Prompts data from API
+  const { prompts: apiPrompts } = usePrompts();
   
   // Check if there are any messages in the conversation
   const hasMessages = thread.messages.length > 0;
-  
-  // Determine placeholder text based on search state and whether it's the first message
-  const getPlaceholderText = () => {
-    if (isSearchEnabled) {
-      return hasMessages ? "Ask follow-up with web search..." : "Ask with web search...";
-    }
-    return hasMessages ? "Ask follow-up.." : "Ask a question..";
-  };
 
   const handleDropdownToggle = (dropdownId: string) => {
     setActiveDropdown(activeDropdown === dropdownId ? null : dropdownId);
@@ -398,8 +440,8 @@ const Composer: FC = () => {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
-        composerRef.current &&
-        !composerRef.current.contains(event.target as Node)
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
       ) {
         setActiveDropdown(null);
       }
@@ -413,32 +455,214 @@ const Composer: FC = () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [activeDropdown]);
+  
+  // Only show category buttons when chat is empty
+  if (hasMessages) return null;
+
+  const categories = [
+    {
+      id: 'wine',
+      title: 'Winemaking',
+      icon: Wine,
+      prompts: apiPrompts.wine_production,
+      description: 'Explore wine production techniques and processes'
+    },
+    {
+      id: 'vineyard',
+      title: 'Viticulture',
+      icon: Grape,
+      prompts: apiPrompts.vineyard_management,
+      description: 'Learn about vineyard management practices'
+    },
+    {
+      id: 'research',
+      title: 'New Research',
+      icon: Search,
+      prompts: apiPrompts.recent_research,
+      description: 'Discover latest research and developments'
+    }
+  ];
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+        {categories.map((category) => {
+          const IconComponent = category.icon;
+          const isActive = activeDropdown === category.id;
+          
+          return (
+            <div key={category.id} className="relative">
+              <button
+                onClick={() => handleDropdownToggle(category.id)}
+                className={cn(
+                  "w-full p-3 rounded-lg border transition-all duration-200",
+                  "bg-zinc-800/50 border-zinc-600/50 hover:bg-zinc-700/50 hover:border-zinc-500/50",
+                  "text-left group cursor-pointer min-h-[60px]",
+                  isActive && "bg-zinc-700/50 border-zinc-500/50"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 p-1.5 rounded-md bg-zinc-700/50 group-hover:bg-zinc-600/50 transition-colors">
+                    <IconComponent className="w-4 h-4 text-zinc-300" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-medium text-white">
+                      {category.title}
+                    </h3>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <svg
+                      className={cn(
+                        "w-4 h-4 text-zinc-400 transition-transform duration-200",
+                        isActive && "rotate-180"
+                      )}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* Full-width dropdown positioned below the entire category buttons container */}
+      {activeDropdown && (
+        <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-700 border border-zinc-600 rounded-lg shadow-lg z-50 overflow-hidden">
+          <div className="p-3 border-b border-zinc-600 bg-zinc-600/30">
+            <div className="flex items-center gap-2">
+              {(() => {
+                const activeCategory = categories.find(cat => cat.id === activeDropdown);
+                const IconComponent = activeCategory?.icon;
+                return (
+                  <>
+                    {IconComponent && <IconComponent className="size-4 text-muted-foreground" />}
+                    <span className="text-sm font-medium text-foreground">{activeCategory?.title}</span>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+          
+          <div className="max-h-64 overflow-y-auto">
+            {(() => {
+              const activeCategory = categories.find(cat => cat.id === activeDropdown);
+              return activeCategory?.prompts.map((prompt: string, index: number) => (
+                <ThreadPrimitive.Suggestion
+                  key={index}
+                  prompt={prompt}
+                  method="replace"
+                  autoSend
+                  onClick={handlePromptSelect}
+                  className={cn(
+                    "w-full text-left px-3 py-2.5 text-sm text-foreground",
+                    "hover:bg-accent hover:text-accent-foreground",
+                    "transition-colors duration-150 ease-in-out",
+                    "border-b border-border/50 last:border-b-0",
+                    "cursor-pointer block"
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-2" />
+                    <span className="flex-1 leading-relaxed">{prompt}</span>
+                  </div>
+                </ThreadPrimitive.Suggestion>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Composer: FC = () => {
+  const { isSearchEnabled, setIsSearchEnabled, uploadedImage, setUploadedImage } = useChatPageContext();
+  const thread = useThread();
+  const [showImageUpload, setShowImageUpload] = useState(false);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Check if there are any messages in the conversation
+  const hasMessages = thread.messages.length > 0;
+  
+  // Determine placeholder text based on search state and whether it's the first message
+  const getPlaceholderText = () => {
+    if (isSearchEnabled) {
+      return hasMessages ? "Ask follow-up with web search..." : "Ask with web search...";
+    }
+    return hasMessages ? "Ask follow-up.." : "Ask a question..";
+  };
+
+
+  const handleImageUpload = async (file: File, description?: string) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (description) {
+        formData.append('description', description);
+      }
+
+      const response = await fetch('/api/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed');
+      }
+
+      console.log('Image processed successfully:', result);
+      
+      // Store image context in state instead of populating textarea
+      if (result.imageContext && result.aiAnalysis) {
+        setUploadedImage({
+          fileName: result.fileName,
+          fileSize: result.fileSize,
+          mimeType: result.mimeType,
+          imageContext: result.imageContext,
+          aiAnalysis: result.aiAnalysis,
+          userDescription: result.userDescription
+        });
+        
+        // Close the modal
+        setShowImageUpload(false);
+        
+        console.log('Image context stored in state. Camera button should now show badge.');
+      }
+    } catch (error) {
+      console.error('Image processing failed:', error);
+      alert('Failed to process image: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
 
   return (
     <div ref={composerRef} className="w-full rounded-full p-2 relative">
-      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-foreground/20 bg-background px-2.5 shadow-sm transition-colors ease-in">
-        {/* Show prompt dropdowns only when chat is empty */}
+      <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-zinc-600 bg-zinc-700 px-2.5 shadow-sm transition-colors ease-in">
+        {/* Show camera upload only when chat is empty */}
         {!hasMessages && (
-          <>
-            <PromptDropdown
-              prompts={WINE_PRODUCTION_PROMPTS}
-              title="Wine Production"
-              icon={Wine}
-              ariaLabel="Show wine production prompts"
-              isOpen={activeDropdown === 'wine'}
-              onToggle={() => handleDropdownToggle('wine')}
-              onPromptSelect={handlePromptSelect}
-            />
-            <PromptDropdown
-              prompts={VINEYARD_MANAGEMENT_PROMPTS}
-              title="Vineyard Management"
-              icon={Grape}
-              ariaLabel="Show vineyard management prompts"
-              isOpen={activeDropdown === 'vineyard'}
-              onToggle={() => handleDropdownToggle('vineyard')}
-              onPromptSelect={handlePromptSelect}
-            />
-          </>
+          <div className="relative">
+            <TooltipIconButton
+              tooltip="Upload Image"
+              variant="ghost"
+              className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
+              onClick={() => setShowImageUpload(true)}
+            >
+              <Camera className="!size-5" />
+            </TooltipIconButton>
+            {uploadedImage && (
+              <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                1
+              </div>
+            )}
+          </div>
         )}
         
         <TooltipIconButton
@@ -450,13 +674,17 @@ const Composer: FC = () => {
               ? "text-blue-500 hover:bg-blue-500/10"
               : "text-muted-foreground hover:text-foreground hover:bg-accent"
           )}
-          onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+          onClick={() => {
+            console.log("CLIENT: Toggling search from", isSearchEnabled, "to", !isSearchEnabled);
+            setIsSearchEnabled(!isSearchEnabled);
+          }}
         >
           <GlobeIcon className="!size-5" />
         </TooltipIconButton>
 
         <ComposerPrimitive.Input
-          rows={1}
+          ref={inputRef}
+          rows={3}
           autoFocus
           placeholder={getPlaceholderText()}
           className="placeholder:text-muted-foreground max-h-40 flex-grow resize-none border-none bg-transparent px-4 py-4 text-lg outline-none focus:ring-0 disabled:cursor-not-allowed text-foreground"
@@ -467,50 +695,12 @@ const Composer: FC = () => {
         </div>
       </ComposerPrimitive.Root>
       
-      {/* Full-width dropdown positioned below the entire input bar */}
-      {!hasMessages && activeDropdown && (
-        <div className="absolute left-0 right-0 top-full mt-2 bg-background border border-border rounded-lg shadow-lg z-50 overflow-hidden">
-          <div className="p-3 border-b border-border bg-muted/30">
-            <div className="flex items-center gap-2">
-              {activeDropdown === 'wine' ? (
-                <>
-                  <Wine className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground">Wine Production</span>
-                </>
-              ) : (
-                <>
-                  <Grape className="size-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground">Vineyard Management</span>
-                </>
-              )}
-            </div>
-          </div>
-          
-          <div className="max-h-64 overflow-y-auto">
-            {(activeDropdown === 'wine' ? WINE_PRODUCTION_PROMPTS : VINEYARD_MANAGEMENT_PROMPTS).map((prompt, index) => (
-              <ThreadPrimitive.Suggestion
-                key={index}
-                prompt={prompt}
-                method="replace"
-                autoSend
-                onClick={handlePromptSelect}
-                className={cn(
-                  "w-full text-left px-3 py-2.5 text-sm text-foreground",
-                  "hover:bg-accent hover:text-accent-foreground",
-                  "transition-colors duration-150 ease-in-out",
-                  "border-b border-border/50 last:border-b-0",
-                  "cursor-pointer block"
-                )}
-              >
-                <div className="flex items-start gap-2">
-                  <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-muted-foreground/40 mt-2" />
-                  <span className="flex-1 leading-relaxed">{prompt}</span>
-                </div>
-              </ThreadPrimitive.Suggestion>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Image Upload Modal */}
+      <ImageUploadModal
+        isOpen={showImageUpload}
+        onClose={() => setShowImageUpload(false)}
+        onUpload={handleImageUpload}
+      />
     </div>
   );
 };
