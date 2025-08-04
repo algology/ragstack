@@ -1,12 +1,12 @@
 import { OpenAI } from "openai";
-import { GoogleGenerativeAI, Content } from "@google/generative-ai";
+import { GoogleGenerativeAI, Content, Tool } from "@google/generative-ai";
 import { Message } from "ai";
 import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GEMINI_CHAT_MODEL = "gemini-2.5-flash";
+const GEMINI_CHAT_MODEL = "gemini-1.5-flash-latest";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------
@@ -590,7 +590,9 @@ export async function POST(req: NextRequest) {
     // Start chat with history
     const chat = model.startChat({
       history: history,
-      tools: enableSearch ? [{ googleSearch: {} }] : undefined,
+      tools: enableSearch ? [{ 
+        googleSearchRetrieval: {} 
+      }] : undefined,
     });
 
     // Get the last message as the current prompt
@@ -600,11 +602,16 @@ export async function POST(req: NextRequest) {
     // Stream the response with error handling for search retrieval
     let result;
     try {
+      console.log(`API_CHAT: Attempting to start streaming with enableSearch: ${enableSearch}`);
+      console.log(`API_CHAT: Tool configuration:`, enableSearch ? [{ googleSearchRetrieval: {} }] : undefined);
       result = await chat.sendMessageStream(currentPrompt);
       console.log(`API_CHAT: Successfully started streaming with search enabled: ${enableSearch}`);
     } catch (error) {
       console.error("API_CHAT: Error with Google Search:", error);
       console.error("API_CHAT: Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      console.error("API_CHAT: Error message:", (error as any)?.message);
+      console.error("API_CHAT: Error status:", (error as any)?.status);
+      
       // Fallback: retry without search tools if search-enabled request fails
       if (enableSearch) {
         console.log("API_CHAT: Retrying without search tools...");
@@ -644,6 +651,8 @@ export async function POST(req: NextRequest) {
 
           // Stream the text response and capture metadata
           for await (const chunk of result.stream) {
+            console.log("API_CHAT: Processing chunk:", JSON.stringify(chunk, null, 2));
+            
             if (chunk.candidates && chunk.candidates[0].content?.parts) {
               for (const part of chunk.candidates[0].content.parts) {
                 if (part.text) {
@@ -661,6 +670,8 @@ export async function POST(req: NextRequest) {
                 "API_CHAT: Captured grounding metadata:",
                 JSON.stringify(groundingMetadata)
               );
+            } else if (chunk.candidates && chunk.candidates[0]) {
+              console.log("API_CHAT: No grounding metadata in chunk candidate:", Object.keys(chunk.candidates[0]));
             }
           }
 

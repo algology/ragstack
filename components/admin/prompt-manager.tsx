@@ -74,9 +74,13 @@ export function PromptManager() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    title: string;
+    category: 'wine_production' | 'vineyard_management' | 'recent_research';
+    display_order: number;
+  }>({
     title: '',
-    category: 'wine_production' as const,
+    category: 'wine_production',
     display_order: 0
   });
 
