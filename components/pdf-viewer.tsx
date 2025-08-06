@@ -107,7 +107,7 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
   const { state, navigateToCitationPage, jumpToCitationPage } = usePDFViewer();
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState<number>(1);
-  const [scale, setScale] = useState<number>(1.4);
+  const [scale, setScale] = useState<number>(1.0);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");

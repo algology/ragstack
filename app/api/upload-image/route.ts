@@ -91,9 +91,11 @@ export async function POST(req: NextRequest) {
     console.log("Image Process API: Gemini Vision analysis completed");
     
     // Create enhanced context with AI analysis
-    const imageContext = description && description.trim() 
-      ? `I have uploaded an image (${fileName}) with description: "${description.trim()}". AI Analysis: ${imageAnalysis}`
-      : `I have uploaded an image (${fileName}). AI Analysis: ${imageAnalysis}`;
+    const imageContext = `USER HAS UPLOADED AN IMAGE: The user has provided an image file called "${fileName}". 
+
+DETAILED IMAGE ANALYSIS: ${imageAnalysis}
+
+CONTEXT: This image was uploaded by the user and they want to discuss it or ask questions about it. Please acknowledge that you can see and analyze their uploaded image in your response.`;
     
     console.log("Image Process API: Created enhanced image context with AI analysis");
     

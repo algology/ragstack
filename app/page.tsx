@@ -204,10 +204,9 @@ export default function ChatPage() {
                   );
                 }
 
-                // Check if image was used and clear it
+                // Image is now persistent - users can upload new images to replace
                 if (parsedPayload.imageUsed && uploadedImage) {
-                  console.log("CLIENT: Image was used in this request, clearing uploaded image");
-                  setUploadedImage(null);
+                  console.log("CLIENT: Image was used in this request (keeping for future messages)");
                 }
               }
             }
@@ -599,13 +598,10 @@ const Composer: FC = () => {
   };
 
 
-  const handleImageUpload = async (file: File, description?: string) => {
+  const handleImageUpload = async (file: File) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      if (description) {
-        formData.append('description', description);
-      }
 
       const response = await fetch('/api/upload-image', {
         method: 'POST',
@@ -646,24 +642,29 @@ const Composer: FC = () => {
   return (
     <div ref={composerRef} className="w-full rounded-full p-2 relative">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-zinc-600 bg-zinc-700 px-2.5 shadow-sm transition-colors ease-in">
-        {/* Show camera upload only when chat is empty */}
-        {!hasMessages && (
-          <div className="relative">
-            <TooltipIconButton
-              tooltip="Upload Image"
-              variant="ghost"
-              className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
-              onClick={() => setShowImageUpload(true)}
+        {/* Camera upload button - now always visible */}
+        <div className="relative">
+          <TooltipIconButton
+            tooltip={uploadedImage ? "Replace uploaded image" : "Upload image"}
+            variant="ghost"
+            className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
+            onClick={() => setShowImageUpload(true)}
+          >
+            <Camera className="!size-5" />
+          </TooltipIconButton>
+          {uploadedImage && (
+            <div 
+              className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold cursor-pointer hover:bg-red-600 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setUploadedImage(null);
+              }}
+              title="Remove uploaded image"
             >
-              <Camera className="!size-5" />
-            </TooltipIconButton>
-            {uploadedImage && (
-              <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                1
-              </div>
-            )}
-          </div>
-        )}
+              ×
+            </div>
+          )}
+        </div>
         
         <TooltipIconButton
           tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}

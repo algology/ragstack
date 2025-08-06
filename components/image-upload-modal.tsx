@@ -8,13 +8,12 @@ import { X, Upload, Camera, FileImage } from "lucide-react";
 interface ImageUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUpload: (file: File, description?: string) => void;
+  onUpload: (file: File) => void;
 }
 
 export function ImageUploadModal({ isOpen, onClose, onUpload }: ImageUploadModalProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [description, setDescription] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -38,7 +37,7 @@ export function ImageUploadModal({ isOpen, onClose, onUpload }: ImageUploadModal
     
     setIsUploading(true);
     try {
-      await onUpload(selectedFile, description || undefined);
+      await onUpload(selectedFile);
       handleClose();
     } catch (error) {
       console.error("Upload failed:", error);
@@ -50,7 +49,6 @@ export function ImageUploadModal({ isOpen, onClose, onUpload }: ImageUploadModal
   const handleClose = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
-    setDescription("");
     setIsUploading(false);
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
@@ -147,22 +145,9 @@ export function ImageUploadModal({ isOpen, onClose, onUpload }: ImageUploadModal
             </div>
           )}
 
-          {/* Description Input */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-white">
-              Description (optional)
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe what you'd like to know about this image..."
-              className="w-full p-3 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-[#8b2c2c] focus:border-transparent"
-              rows={3}
-              disabled={isUploading}
-            />
-            <p className="text-xs text-muted-foreground">
-              Note: Images are processed temporarily and not permanently stored.
-            </p>
+          {/* Info Note */}
+          <div className="text-xs text-muted-foreground">
+            Images are processed temporarily and not permanently stored. Provide context in your chat message.
           </div>
         </div>
 
