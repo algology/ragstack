@@ -315,6 +315,9 @@ const ChatPageLayout: FC = () => {
                       AssistantMessage: PerplexityAssistantMessage,
                     }}
                   />
+                  <ThreadPrimitive.If running>
+                    <TypingIndicator />
+                  </ThreadPrimitive.If>
                   <div className="min-h-8 flex-grow" />
                   <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
                     <ThreadScrollToBottom />
@@ -375,6 +378,22 @@ const ChatPageContext = React.createContext<ChatPageContextType>({
 function useChatPageContext() {
   return React.useContext(ChatPageContext);
 }
+
+const TypingIndicator: FC = () => {
+  return (
+    <div className="relative w-full max-w-[var(--thread-max-width)] py-4 text-white">
+      <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
+      <div className="flex items-center gap-2">
+        <div className="flex items-center space-x-1">
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+        </div>
+        <span className="text-gray-400 text-sm ml-2">Thinking...</span>
+      </div>
+    </div>
+  );
+};
 
 const ThreadScrollToBottom: FC = () => {
   return (
