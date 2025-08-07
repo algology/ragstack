@@ -1,14 +1,34 @@
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { X, FileText, Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, BookOpen } from "lucide-react";
+import 'react-pdf/dist/Page/TextLayer.css';
+import { X, FileText, Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, BookOpen, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { usePDFViewer } from "@/contexts/pdf-viewer-context";
 
 interface PDFViewerProps {
   className?: string;
+}
+
+interface SearchResult {
+  pageNumber: number;
+  textIndex: number;
+  text: string;
+  context: string;
+}
+
+interface PageTextContent {
+  pageNumber: number;
+  textItems: Array<{
+    str: string;
+    transform: number[];
+    width: number;
+    height: number;
+  }>;
+  fullText: string;
 }
 
 // Client-only wrapper to prevent SSR issues
@@ -63,7 +83,6 @@ function ClientOnlyPDFViewer({ className }: PDFViewerProps) {
 
   return (
     <div className={`flex flex-col h-full bg-background border-l ${className}`}>
-      <PDFViewerHeader />
       <div className="flex-1 overflow-hidden">
         {pdfWorkerReady && Document && Page ? (
           <PDFViewerContent Document={Document} Page={Page} />
@@ -80,25 +99,98 @@ function ClientOnlyPDFViewer({ className }: PDFViewerProps) {
   );
 }
 
-function PDFViewerHeader() {
+interface PDFViewerHeaderProps {
+  searchProps?: {
+    searchTerm: string;
+    onSearchChange: (term: string) => void;
+    currentResult: number;
+    totalResults: number;
+    onPreviousResult: () => void;
+    onNextResult: () => void;
+    isSearching: boolean;
+  };
+}
+
+function PDFViewerHeader({ searchProps }: PDFViewerHeaderProps) {
   const { state, closePDFViewer } = usePDFViewer();
+  const [showSearch, setShowSearch] = useState(false);
 
   return (
-    <div className="flex items-center justify-between p-4 border-b bg-muted/50">
-      <div className="flex items-center gap-2">
-        <FileText className="h-4 w-4" />
-        <h3 className="text-sm font-medium truncate">
-          {state.documentName || "Document"}
-        </h3>
+    <div className="border-b bg-muted/50">
+      {/* Main header */}
+      <div className="flex items-center justify-between p-4">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4" />
+          <h3 className="text-sm font-medium truncate">
+            {state.documentName || "Document"}
+          </h3>
+        </div>
+        <div className="flex items-center gap-2">
+          {searchProps && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSearch(!showSearch)}
+              className="h-8 w-8 p-0"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={closePDFViewer}
+            className="h-8 w-8 p-0"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={closePDFViewer}
-        className="h-8 w-8 p-0"
-      >
-        <X className="h-4 w-4" />
-      </Button>
+      
+      {/* Search bar */}
+      {showSearch && searchProps && (
+        <div className="px-4 pb-4">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search in document..."
+                value={searchProps.searchTerm}
+                onChange={(e) => searchProps.onSearchChange(e.target.value)}
+                className="pl-8 h-9"
+              />
+            </div>
+            {searchProps.totalResults > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  {searchProps.currentResult + 1} of {searchProps.totalResults}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={searchProps.onPreviousResult}
+                  disabled={searchProps.totalResults === 0}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={searchProps.onNextResult}
+                  disabled={searchProps.totalResults === 0}
+                  className="h-8 w-8 p-0"
+                >
+                  <ChevronRight className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+            {searchProps.isSearching && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -115,6 +207,159 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
   const [textContent, setTextContent] = useState<string>('');
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const lastSyncedPageRef = useRef<number | null>(null);
+  
+  // Search-related state
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState<number>(0);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [pageTextCache, setPageTextCache] = useState<Map<number, PageTextContent>>(new Map());
+  const pdfDocumentRef = useRef<any>(null);
+
+  // Extract text content from a specific PDF page
+  const extractPageText = useCallback(async (pageNum: number): Promise<PageTextContent | undefined> => {
+    if (!pdfDocumentRef.current) return undefined;
+    
+    try {
+      const page = await pdfDocumentRef.current.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      
+      const textItems = textContent.items.map((item: any) => ({
+        str: item.str,
+        transform: item.transform,
+        width: item.width,
+        height: item.height,
+      }));
+      
+      const fullText = textItems.map((item: any) => item.str).join(' ');
+      
+      const pageTextContent: PageTextContent = {
+        pageNumber: pageNum,
+        textItems,
+        fullText,
+      };
+      
+      return pageTextContent;
+    } catch (error) {
+      console.error(`Failed to extract text from page ${pageNum}:`, error);
+      return undefined;
+    }
+  }, []);
+
+  // Search through all pages for the given term
+  const searchInPDF = useCallback(async (term: string) => {
+    if (!term.trim() || !pdfDocumentRef.current || numPages === 0) {
+      setSearchResults([]);
+      setCurrentSearchIndex(0);
+      return;
+    }
+
+    setIsSearching(true);
+    const results: SearchResult[] = [];
+    
+    try {
+      // Search through all pages
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        let pageTextContent = pageTextCache.get(pageNum);
+        
+        if (!pageTextContent) {
+          pageTextContent = await extractPageText(pageNum);
+          if (pageTextContent) {
+            setPageTextCache(prev => new Map(prev).set(pageNum, pageTextContent as PageTextContent));
+          }
+        }
+        
+        if (pageTextContent) {
+          const searchRegex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+          const matches = [...pageTextContent.fullText.matchAll(searchRegex)];
+          
+          matches.forEach((match) => {
+            const matchIndex = match.index || 0;
+            const contextStart = Math.max(0, matchIndex - 50);
+            const contextEnd = Math.min(pageTextContent.fullText.length, matchIndex + match[0].length + 50);
+            const context = pageTextContent.fullText.slice(contextStart, contextEnd);
+            
+            results.push({
+              pageNumber: pageNum,
+              textIndex: matchIndex,
+              text: match[0],
+              context: context,
+            });
+          });
+        }
+      }
+      
+      setSearchResults(results);
+      setCurrentSearchIndex(0);
+      
+      // Navigate to first result
+      if (results.length > 0) {
+        setPageNumber(results[0].pageNumber);
+        lastSyncedPageRef.current = results[0].pageNumber;
+      }
+    } catch (error) {
+      console.error('Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [numPages, pageTextCache, extractPageText]);
+
+  // Handle search term changes with debouncing
+  useEffect(() => {
+    if (searchTerm.trim()) {
+      const timeoutId = setTimeout(() => searchInPDF(searchTerm), 300);
+      return () => clearTimeout(timeoutId);
+    } else {
+      setSearchResults([]);
+      setCurrentSearchIndex(0);
+    }
+  }, [searchTerm, searchInPDF]);
+
+  const handleSearchChange = useCallback((term: string) => {
+    setSearchTerm(term);
+  }, []);
+
+  // Navigate to previous search result
+  const goToPreviousResult = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const newIndex = currentSearchIndex > 0 ? currentSearchIndex - 1 : searchResults.length - 1;
+    setCurrentSearchIndex(newIndex);
+    setPageNumber(searchResults[newIndex].pageNumber);
+    lastSyncedPageRef.current = searchResults[newIndex].pageNumber;
+  }, [searchResults, currentSearchIndex]);
+
+  // Navigate to next search result
+  const goToNextResult = useCallback(() => {
+    if (searchResults.length === 0) return;
+    const newIndex = currentSearchIndex < searchResults.length - 1 ? currentSearchIndex + 1 : 0;
+    setCurrentSearchIndex(newIndex);
+    setPageNumber(searchResults[newIndex].pageNumber);
+    lastSyncedPageRef.current = searchResults[newIndex].pageNumber;
+  }, [searchResults, currentSearchIndex]);
+
+  // Custom text renderer to highlight search matches
+  const customTextRenderer = useCallback(({ str }: { str: string; itemIndex: number }) => {
+    if (!searchTerm || !searchResults.length) return str;
+    
+    const currentPageResults = searchResults.filter(result => result.pageNumber === pageNumber);
+    if (currentPageResults.length === 0) return str;
+    
+    const currentResult = searchResults[currentSearchIndex];
+    const isCurrentResultPage = currentResult && currentResult.pageNumber === pageNumber;
+    
+    const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = str.split(regex);
+    
+    return parts.map((part) => {
+      const isMatch = regex.test(part);
+      const isCurrent = isCurrentResultPage && part.toLowerCase() === currentResult.text.toLowerCase();
+      
+      if (isMatch) {
+        return `<span ${isCurrent ? 'data-search-current' : 'data-search-highlight'}="true">${part}</span>`;
+      }
+      return part;
+    }).join('');
+  }, [searchTerm, searchResults, pageNumber, currentSearchIndex]);
 
   const loadContent = useCallback(async () => {
     if (!state.documentId) return;
@@ -160,11 +405,19 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
   useEffect(() => {
     // Reset sync tracking when document changes
     lastSyncedPageRef.current = null;
+    // Clear search results when switching documents
+    setSearchTerm('');
+    setSearchResults([]);
+    setCurrentSearchIndex(0);
+    setPageTextCache(new Map());
+    pdfDocumentRef.current = null;
     loadContent();
   }, [loadContent]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
+  const onDocumentLoadSuccess = useCallback((pdf: { numPages: number }) => {
+    const numPages = pdf.numPages;
     setNumPages(numPages);
+    pdfDocumentRef.current = pdf; // Store PDF document reference for text extraction
     
     // Use page number from context if provided, otherwise default to page 1
     const targetPage = state.pageNumber && state.pageNumber > 0 && state.pageNumber <= numPages 
@@ -255,8 +508,20 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
 
   // If it's a PDF file, show the PDF viewer
   if (contentType.includes('application/pdf') && pdfUrl) {
+    // Create search props for PDF content
+    const searchProps = {
+      searchTerm,
+      onSearchChange: handleSearchChange,
+      currentResult: currentSearchIndex,
+      totalResults: searchResults.length,
+      onPreviousResult: goToPreviousResult,
+      onNextResult: goToNextResult,
+      isSearching,
+    };
+
     return (
       <div className="flex flex-col h-full">
+        <PDFViewerHeader searchProps={searchProps} />
         {/* PDF Controls */}
         {numPages > 0 && (
           <div className="p-2 border-b bg-muted/30 space-y-2">
@@ -404,8 +669,9 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
               <Page
                 pageNumber={pageNumber}
                 scale={scale}
-                renderTextLayer={false}
+                renderTextLayer={true}
                 renderAnnotationLayer={false}
+                customTextRenderer={customTextRenderer}
                 loading={
                   <div className="flex items-center justify-center h-96">
                     <div className="flex items-center gap-2">
@@ -440,6 +706,7 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
   if (textContent) {
     return (
       <div className="flex flex-col h-full">
+        <PDFViewerHeader />
         <div className="p-2 border-b bg-muted/30">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-muted-foreground" />
@@ -461,10 +728,13 @@ function PDFViewerContent({ Document, Page }: { Document: any; Page: any }) {
 
   // Loading or no content state
   return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center">
-        <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-        <p className="text-sm text-muted-foreground">No content available</p>
+    <div className="flex flex-col h-full">
+      <PDFViewerHeader />
+      <div className="flex items-center justify-center flex-1">
+        <div className="text-center">
+          <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <p className="text-sm text-muted-foreground">No content available</p>
+        </div>
       </div>
     </div>
   );
