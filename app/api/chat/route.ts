@@ -1,5 +1,5 @@
 import { OpenAI } from "openai";
-import { GoogleGenerativeAI, Content, Tool } from "@google/generative-ai";
+import { GoogleGenerativeAI, Content } from "@google/generative-ai";
 import { Message } from "ai";
 import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
       messagesLength: messages.length,
       enableSearch,
       hasImageContext: !!imageContext,
+      imageContextLength: imageContext ? imageContext.length : 0,
       imageContextPreview: imageContext ? imageContext.substring(0, 100) + "..." : null,
     }); // 2. Log parsed body
 
@@ -145,9 +146,13 @@ export async function POST(req: NextRequest) {
     if (imageContext && userMessageText) {
       userMessageText = `${imageContext}\n\nUser question: ${userMessageText}`;
       console.log("API_CHAT: Combined message with image context");
+      console.log("API_CHAT: Final userMessageText length:", userMessageText.length);
     } else if (imageContext && !userMessageText) {
       userMessageText = imageContext;
       console.log("API_CHAT: Using only image context as message");
+      console.log("API_CHAT: Image-only userMessageText length:", userMessageText.length);
+    } else if (!imageContext && userMessageText) {
+      console.log("API_CHAT: No image context, using plain user message");
     }
 
     if (!userMessageText) {
@@ -595,9 +600,9 @@ export async function POST(req: NextRequest) {
       }] : undefined,
     });
 
-    // Get the last message as the current prompt
-    const currentPrompt =
-      chatMessages[chatMessages.length - 1]?.content || "Hello";
+    // Get the current prompt (use modified userMessageText which includes image context)
+    const currentPrompt = userMessageText || "Hello";
+    console.log("API_CHAT: Using current prompt with image context:", currentPrompt.substring(0, 200) + "...");
 
     // Stream the response with error handling for search retrieval
     let result;

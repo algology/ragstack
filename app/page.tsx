@@ -25,6 +25,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAssistantRuntime,
   useMessage,
   useThread,
   type ThreadMessage,
@@ -204,10 +205,9 @@ export default function ChatPage() {
                   );
                 }
 
-                // Check if image was used and clear it
+                // Image is now persistent - users can upload new images to replace
                 if (parsedPayload.imageUsed && uploadedImage) {
-                  console.log("CLIENT: Image was used in this request, clearing uploaded image");
-                  setUploadedImage(null);
+                  console.log("CLIENT: Image was used in this request (keeping for future messages)");
                 }
               }
             }
@@ -291,11 +291,18 @@ const ChatPageLayout: FC = () => {
 
   return (
     <div className="flex h-screen bg-[#191a1a] text-foreground">
+      {/* Slim Sidebar: grape icon only (starts a new chat) */}
+      <aside className="w-[72px] shrink-0 border-r border-foreground/10 bg-[#151616] flex flex-col items-center">
+        <div className="p-3">
+          <NewChatButton />
+        </div>
+      </aside>
+
       {/* Main Chat Area with Thread Context */}
-      <div 
+      <div
         className={cn(
-          "flex flex-col transition-all duration-300 ease-in-out",
-          state.isOpen ? "w-[60%]" : "w-full" // Full width when PDF closed, 60% when PDF open
+          "flex flex-col transition-all duration-300 ease-in-out flex-1",
+          state.isOpen ? "basis-[60%]" : "basis-auto"
         )}
       >
         <ThreadPrimitive.Root
@@ -316,6 +323,9 @@ const ChatPageLayout: FC = () => {
                       AssistantMessage: PerplexityAssistantMessage,
                     }}
                   />
+                  <ThreadPrimitive.If running>
+                    <TypingIndicator />
+                  </ThreadPrimitive.If>
                   <div className="min-h-8 flex-grow" />
                   <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
                     <ThreadScrollToBottom />
@@ -329,15 +339,43 @@ const ChatPageLayout: FC = () => {
       </div>
 
       {/* PDF Viewer Panel */}
-      <div 
+      <div
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
-          state.isOpen ? "w-[40%]" : "w-0"
+          state.isOpen ? "basis-[40%]" : "basis-0"
         )}
       >
         <PDFViewer />
       </div>
     </div>
+  );
+};
+
+const NewChatButton: FC = () => {
+  const runtime = useAssistantRuntime();
+  
+  const handleClick = () => {
+    try {
+      // Revert back to the method that was actually working
+      if (runtime?.switchToNewThread) {
+        runtime.switchToNewThread();
+      } else {
+        console.error("switchToNewThread method not available");
+      }
+    } catch (error) {
+      console.error("Error switching to new thread:", error);
+    }
+  };
+  
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="size-12 rounded-full hover:bg-foreground/10 transition-colors flex items-center justify-center"
+      aria-label="Home"
+    >
+      <Grape className="text-white" size={24} />
+    </button>
   );
 };
 
@@ -376,6 +414,21 @@ const ChatPageContext = React.createContext<ChatPageContextType>({
 function useChatPageContext() {
   return React.useContext(ChatPageContext);
 }
+
+const TypingIndicator: FC = () => {
+  return (
+    <div className="relative w-full max-w-[var(--thread-max-width)] py-4 text-white">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center space-x-1">
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+        </div>
+        <span className="text-gray-400 text-sm ml-2">Thinking...</span>
+      </div>
+    </div>
+  );
+};
 
 const ThreadScrollToBottom: FC = () => {
   return (
@@ -599,13 +652,10 @@ const Composer: FC = () => {
   };
 
 
-  const handleImageUpload = async (file: File, description?: string) => {
+  const handleImageUpload = async (file: File) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      if (description) {
-        formData.append('description', description);
-      }
 
       const response = await fetch('/api/upload-image', {
         method: 'POST',
@@ -646,24 +696,29 @@ const Composer: FC = () => {
   return (
     <div ref={composerRef} className="w-full rounded-full p-2 relative">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-full border border-zinc-600 bg-zinc-700 px-2.5 shadow-sm transition-colors ease-in">
-        {/* Show camera upload only when chat is empty */}
-        {!hasMessages && (
-          <div className="relative">
-            <TooltipIconButton
-              tooltip="Upload Image"
-              variant="ghost"
-              className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
-              onClick={() => setShowImageUpload(true)}
+        {/* Camera upload button - now always visible */}
+        <div className="relative">
+          <TooltipIconButton
+            tooltip={uploadedImage ? "Replace uploaded image" : "Upload image"}
+            variant="ghost"
+            className="my-2.5 size-10 rounded-full p-2 transition-colors ease-in text-muted-foreground hover:text-foreground hover:bg-accent"
+            onClick={() => setShowImageUpload(true)}
+          >
+            <Camera className="!size-5" />
+          </TooltipIconButton>
+          {uploadedImage && (
+            <div 
+              className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold cursor-pointer hover:bg-red-600 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setUploadedImage(null);
+              }}
+              title="Remove uploaded image"
             >
-              <Camera className="!size-5" />
-            </TooltipIconButton>
-            {uploadedImage && (
-              <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                1
-              </div>
-            )}
-          </div>
-        )}
+              ×
+            </div>
+          )}
+        </div>
         
         <TooltipIconButton
           tooltip={isSearchEnabled ? "Disable Web Search" : "Enable Web Search"}
@@ -987,7 +1042,7 @@ const MarkdownWithCitations: FC<{
       </li>
     ),
     code: (props: any) => {
-      const { node, inline, className, children, ...rest } = props;
+      const { inline, children, ...rest } = props;
       if (inline) {
         return (
           <code
@@ -1141,7 +1196,7 @@ const PerplexityAssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
       <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
-        <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
+        {messageText && <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />}
 
         {messageText && (
           <MarkdownWithCitations
