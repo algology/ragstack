@@ -25,6 +25,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAssistantRuntime,
   useMessage,
   useThread,
   type ThreadMessage,
@@ -290,11 +291,18 @@ const ChatPageLayout: FC = () => {
 
   return (
     <div className="flex h-screen bg-[#191a1a] text-foreground">
+      {/* Slim Sidebar: grape icon only (starts a new chat) */}
+      <aside className="w-[72px] shrink-0 border-r border-foreground/10 bg-[#151616] flex flex-col items-center">
+        <div className="p-3">
+          <NewChatButton />
+        </div>
+      </aside>
+
       {/* Main Chat Area with Thread Context */}
-      <div 
+      <div
         className={cn(
-          "flex flex-col transition-all duration-300 ease-in-out",
-          state.isOpen ? "w-[60%]" : "w-full" // Full width when PDF closed, 60% when PDF open
+          "flex flex-col transition-all duration-300 ease-in-out flex-1",
+          state.isOpen ? "basis-[60%]" : "basis-auto"
         )}
       >
         <ThreadPrimitive.Root
@@ -331,15 +339,43 @@ const ChatPageLayout: FC = () => {
       </div>
 
       {/* PDF Viewer Panel */}
-      <div 
+      <div
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
-          state.isOpen ? "w-[40%]" : "w-0"
+          state.isOpen ? "basis-[40%]" : "basis-0"
         )}
       >
         <PDFViewer />
       </div>
     </div>
+  );
+};
+
+const NewChatButton: FC = () => {
+  const runtime = useAssistantRuntime();
+  
+  const handleClick = () => {
+    try {
+      // Revert back to the method that was actually working
+      if (runtime?.switchToNewThread) {
+        runtime.switchToNewThread();
+      } else {
+        console.error("switchToNewThread method not available");
+      }
+    } catch (error) {
+      console.error("Error switching to new thread:", error);
+    }
+  };
+  
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="size-12 rounded-full hover:bg-foreground/10 transition-colors flex items-center justify-center"
+      aria-label="Home"
+    >
+      <Grape className="text-white" size={24} />
+    </button>
   );
 };
 
@@ -382,7 +418,6 @@ function useChatPageContext() {
 const TypingIndicator: FC = () => {
   return (
     <div className="relative w-full max-w-[var(--thread-max-width)] py-4 text-white">
-      <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
       <div className="flex items-center gap-2">
         <div className="flex items-center space-x-1">
           <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
@@ -1007,7 +1042,7 @@ const MarkdownWithCitations: FC<{
       </li>
     ),
     code: (props: any) => {
-      const { node, inline, className, children, ...rest } = props;
+      const { inline, children, ...rest } = props;
       if (inline) {
         return (
           <code
@@ -1161,7 +1196,7 @@ const PerplexityAssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_1fr] grid-rows-[auto_1fr] py-4 text-white">
       <div className="text-foreground col-start-1 col-span-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.95)] break-words leading-7">
-        <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />
+        {messageText && <div className="w-full h-px bg-gray-700 opacity-50 mb-4" />}
 
         {messageText && (
           <MarkdownWithCitations

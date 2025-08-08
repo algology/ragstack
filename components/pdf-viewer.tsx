@@ -48,7 +48,7 @@ export function PDFViewer({ className }: PDFViewerProps) {
 
 // The actual PDF viewer component that only runs on the client
 function ClientOnlyPDFViewer({ className }: PDFViewerProps) {
-  const { state, closePDFViewer } = usePDFViewer();
+  const { state } = usePDFViewer();
   const [Document, setDocument] = useState<any>(null);
   const [Page, setPage] = useState<any>(null);
   const [pdfWorkerReady, setPdfWorkerReady] = useState(false);

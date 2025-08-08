@@ -70,29 +70,6 @@ export default function AdminPage() {
     pageNumber: number;
   }
 
-  const extractTextFromFile = async (file: File): Promise<string> => {
-    if (file.type === "application/pdf") {
-      const pdfjsLib = await import("pdfjs-dist");
-              pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText =
-          textContent.items
-            ?.map((item) => ("str" in item ? item.str : ""))
-            .join(" \n") ?? "";
-        fullText += pageText + " \n";
-      }
-      return fullText;
-    } else if (file.type === "text/plain") {
-      return await file.text();
-    } else {
-      throw new Error("Unsupported file type passed to extraction.");
-    }
-  };
 
   const extractTextWithPageNumbers = async (file: File): Promise<PageTextChunk[]> => {
     if (file.type === "application/pdf") {

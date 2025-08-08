@@ -1,5 +1,5 @@
 import { OpenAI } from "openai";
-import { GoogleGenerativeAI, Content, Tool } from "@google/generative-ai";
+import { GoogleGenerativeAI, Content } from "@google/generative-ai";
 import { Message } from "ai";
 import { supabase } from "@/lib/supabaseClient";
 import { NextRequest } from "next/server";
