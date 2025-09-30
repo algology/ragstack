@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GEMINI_CHAT_MODEL = "gemini-1.5-flash-latest";
+const GEMINI_CHAT_MODEL = "gemini-2.5-flash";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------
@@ -17,6 +17,11 @@ export const runtime = "edge"; // Use edge runtime for Vercel AI SDK
 const openaiEmbeddings = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+
+const groundingTools = [{
+  googleSearch: {},
+} as any];
 
 // Initialize GoogleGenerativeAI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
@@ -595,9 +600,7 @@ export async function POST(req: NextRequest) {
     // Start chat with history
     const chat = model.startChat({
       history: history,
-      tools: enableSearch ? [{ 
-        googleSearchRetrieval: {} 
-      }] : undefined,
+      tools: enableSearch ? groundingTools : undefined,
     });
 
     // Get the current prompt (use modified userMessageText which includes image context)
@@ -608,7 +611,7 @@ export async function POST(req: NextRequest) {
     let result;
     try {
       console.log(`API_CHAT: Attempting to start streaming with enableSearch: ${enableSearch}`);
-      console.log(`API_CHAT: Tool configuration:`, enableSearch ? [{ googleSearchRetrieval: {} }] : undefined);
+      console.log(`API_CHAT: Tool configuration:`, enableSearch ? groundingTools : undefined);
       result = await chat.sendMessageStream(currentPrompt);
       console.log(`API_CHAT: Successfully started streaming with search enabled: ${enableSearch}`);
     } catch (error) {
