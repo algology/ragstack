@@ -53,7 +53,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               messages[messages.length - 1]?.role === "user" && (
                 <div className="flex justify-start p-3">
                   <div className="flex space-x-1 justify-center items-center">
-                    <span className="sr-only">Thinking...</span>
+   
                     <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.3s]"></div>
                     <div className="h-2 w-2 bg-current rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                     <div className="h-2 w-2 bg-current rounded-full animate-bounce"></div>

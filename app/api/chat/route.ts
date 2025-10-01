@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GEMINI_CHAT_MODEL = "gemini-2.5-flash";
+const GEMINI_CHAT_MODEL = "gemini-2.5-pro";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------
@@ -92,6 +92,64 @@ interface ChatRequestBody {
   documentName?: string;
   enableSearch?: boolean; // Added for search toggle
   imageContext?: string; // Added for image context
+}
+
+// Function to add citations to text based on grounding metadata
+function addCitationsToText(text: string, groundingMetadata: any, ragSourceOffset: number = 0): string {
+  if (!groundingMetadata.groundingSupports || !groundingMetadata.groundingChunks) {
+    return text;
+  }
+
+  let modifiedText = text;
+
+  // Sort supports by end_index in descending order to avoid shifting issues when inserting
+  const sortedSupports = [...groundingMetadata.groundingSupports].sort(
+    (a: any, b: any) => (b.segment?.endIndex ?? 0) - (a.segment?.endIndex ?? 0)
+  );
+
+  for (const support of sortedSupports) {
+    let endIndex = support.segment?.endIndex;
+    if (endIndex === undefined || !support.groundingChunkIndices?.length) {
+      continue;
+    }
+
+    // Find the best insertion point - prefer end of sentence or after punctuation
+    // Look ahead for sentence boundaries within a reasonable range
+    const searchRange = 50;
+    const searchText = modifiedText.slice(endIndex, Math.min(endIndex + searchRange, modifiedText.length));
+    
+    // Look for sentence-ending punctuation followed by space or end of text
+    const sentenceEnd = searchText.match(/[.!?]\s|[.!?]$/);
+    if (sentenceEnd && sentenceEnd.index !== undefined) {
+      // Move to after the punctuation
+      endIndex += sentenceEnd.index + 1;
+    } else {
+      // If no sentence end, look for comma, semicolon, or other natural break
+      const punctuationBreak = searchText.match(/[,;:]\s/);
+      if (punctuationBreak && punctuationBreak.index !== undefined && punctuationBreak.index < 20) {
+        endIndex += punctuationBreak.index + 1;
+      } else {
+        // If no punctuation, look for space to avoid breaking words
+        const nextSpace = searchText.indexOf(' ');
+        if (nextSpace !== -1 && nextSpace < 15) {
+          endIndex += nextSpace;
+        }
+      }
+    }
+
+    // Calculate the citation number based on the position in the blended sources array
+    // RAG sources come first, then web sources
+    const citationNumbers = support.groundingChunkIndices
+      .map((index: number) => `[${index + ragSourceOffset + 1}]`)
+      .filter(Boolean);
+
+    if (citationNumbers.length > 0) {
+      const citationString = citationNumbers.join("");
+      modifiedText = modifiedText.slice(0, endIndex) + citationString + modifiedText.slice(endIndex);
+    }
+  }
+
+  return modifiedText;
 }
 
 // Define types for RPC parameters and document chunks
@@ -602,6 +660,7 @@ export async function POST(req: NextRequest) {
       history: history,
       tools: enableSearch ? groundingTools : undefined,
     });
+    console.log("API_CHAT: Chat started with tools:", enableSearch ? groundingTools : undefined);
 
     // Get the current prompt (use modified userMessageText which includes image context)
     const currentPrompt = userMessageText || "Hello";
@@ -645,28 +704,27 @@ export async function POST(req: NextRequest) {
         try {
 
           // Send initial data with deduplicated RAG sources and image usage flag
-          const initialPayload = { 
+          const initialPayload = {
             ragSources: deduplicatedSources,
             imageUsed: !!imageContext
           };
           controller.enqueue(
             encoder.encode(
-              `2:[${JSON.stringify(JSON.stringify(initialPayload))}]\n`
+              `2:[${JSON.stringify(initialPayload)}]\n`
             )
           );
 
           let groundingMetadata: any = null;
+          let fullText = "";
 
-          // Stream the text response and capture metadata
+          // First, collect all text and metadata
           for await (const chunk of result.stream) {
             console.log("API_CHAT: Processing chunk:", JSON.stringify(chunk, null, 2));
-            
+
             if (chunk.candidates && chunk.candidates[0].content?.parts) {
               for (const part of chunk.candidates[0].content.parts) {
                 if (part.text) {
-                  controller.enqueue(
-                    encoder.encode(`0:${JSON.stringify(part.text)}\n`)
-                  );
+                  fullText += part.text;
                 }
               }
             }
@@ -676,11 +734,26 @@ export async function POST(req: NextRequest) {
               groundingMetadata = chunk.candidates[0].groundingMetadata;
               console.log(
                 "API_CHAT: Captured grounding metadata:",
-                JSON.stringify(groundingMetadata)
+                JSON.stringify(groundingMetadata, null, 2)
               );
             } else if (chunk.candidates && chunk.candidates[0]) {
-              console.log("API_CHAT: No grounding metadata in chunk candidate:", Object.keys(chunk.candidates[0]));
+              console.log("API_CHAT: No grounding metadata in chunk candidate. Available keys:", Object.keys(chunk.candidates[0]));
             }
+          }
+
+          // If we have grounding metadata, add citations to the text
+          if (groundingMetadata && groundingMetadata.groundingSupports) {
+            // Calculate offset for web sources (RAG sources come first in blendedSources)
+            const ragSourceCount = deduplicatedSources.length;
+            fullText = addCitationsToText(fullText, groundingMetadata, ragSourceCount);
+            console.log("API_CHAT: Added citations to text. RAG sources:", ragSourceCount, "Modified text length:", fullText.length);
+          }
+
+          // Now stream the complete text with citations
+          if (fullText) {
+            controller.enqueue(
+              encoder.encode(`0:${JSON.stringify(fullText)}\n`)
+            );
           }
 
           // Send final payload with both RAG sources and grounding metadata
@@ -692,7 +765,7 @@ export async function POST(req: NextRequest) {
             };
             controller.enqueue(
               encoder.encode(
-                `2:[${JSON.stringify(JSON.stringify(finalPayload))}]\n`
+                `2:[${JSON.stringify(finalPayload)}]\n`
               )
             );
             console.log("API_CHAT: Sent final payload with grounding metadata");
