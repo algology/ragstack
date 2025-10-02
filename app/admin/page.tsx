@@ -783,127 +783,132 @@ export default function AdminPage() {
             </>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Upload New Document</CardTitle>
-              <CardDescription>
-                Upload a text or PDF file. It will be processed and made
-                available for chat.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <UploadDropzone
-                onFileSelect={handleFileSelected}
-                accept=".txt,.pdf"
-                disabled={isUploading}
-              />
-              
-              {selectedFiles.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">
-                    {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected:
-                  </p>
-                  <div className="max-h-32 overflow-y-auto">
-                    {selectedFiles.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between text-sm p-2 bg-muted rounded">
-                        <span>{file.name}</span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-                          }}
-                          disabled={isUploading}
-                        >
-                          Remove
-                        </Button>
+          {/* Upload and Management sections - only show when analytics is hidden */}
+          {!showAnalytics && (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Upload New Document</CardTitle>
+                  <CardDescription>
+                    Upload a text or PDF file. It will be processed and made
+                    available for chat.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <UploadDropzone
+                    onFileSelect={handleFileSelected}
+                    accept=".txt,.pdf"
+                    disabled={isUploading}
+                  />
+                  
+                  {selectedFiles.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">
+                        {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected:
+                      </p>
+                      <div className="max-h-32 overflow-y-auto">
+                        {selectedFiles.map((file, index) => (
+                          <div key={index} className="flex items-center justify-between text-sm p-2 bg-muted rounded">
+                            <span>{file.name}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+                              }}
+                              disabled={isUploading}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    </div>
+                  )}
 
-              <Button
-                onClick={handleUpload}
-                disabled={selectedFiles.length === 0 || isUploading}
-                className="w-full"
-              >
-                {isUploading ? "Processing & Uploading..." : `Upload ${selectedFiles.length} File${selectedFiles.length === 1 ? '' : 's'}`}
-              </Button>
-            </CardContent>
-            {uploadStatus && (
-              <CardFooter>
-                <p className="text-sm text-muted-foreground">{uploadStatus}</p>
-              </CardFooter>
-            )}
-          </Card>
+                  <Button
+                    onClick={handleUpload}
+                    disabled={selectedFiles.length === 0 || isUploading}
+                    className="w-full"
+                  >
+                    {isUploading ? "Processing & Uploading..." : `Upload ${selectedFiles.length} File${selectedFiles.length === 1 ? '' : 's'}`}
+                  </Button>
+                </CardContent>
+                {uploadStatus && (
+                  <CardFooter>
+                    <p className="text-sm text-muted-foreground">{uploadStatus}</p>
+                  </CardFooter>
+                )}
+              </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Manage Uploaded Documents</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {fetchError && (
-                <p className="text-sm text-destructive mb-4">{fetchError}</p>
-              )}
-              {uploadedDocuments.length === 0 && !fetchError ? (
-                <p className="text-sm text-muted-foreground">
-                  No documents uploaded yet.
-                </p>
-              ) : (
-                <ScrollArea className="h-[300px] pr-3">
-                  <ul className="space-y-3">
-                    {uploadedDocuments.map((doc) => (
-                      <li
-                        key={doc.id}
-                        className="flex items-center justify-between p-3 border rounded-md hover:bg-muted/50"
-                        title={doc.name}
-                      >
-                        <div className="flex items-center space-x-3 min-w-0 flex-1 mr-3">
-                          {doc.name.toLowerCase().endsWith(".pdf") ? (
-                            <File
-                              size={20}
-                              className="flex-shrink-0 text-muted-foreground"
-                            />
-                          ) : (
-                            <FileText
-                              size={20}
-                              className="flex-shrink-0 text-muted-foreground"
-                            />
-                          )}
-                          <span
-                            className="text-sm font-medium"
+              <Card>
+                <CardHeader>
+                  <CardTitle>Manage Uploaded Documents</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {fetchError && (
+                    <p className="text-sm text-destructive mb-4">{fetchError}</p>
+                  )}
+                  {uploadedDocuments.length === 0 && !fetchError ? (
+                    <p className="text-sm text-muted-foreground">
+                      No documents uploaded yet.
+                    </p>
+                  ) : (
+                    <ScrollArea className="h-[300px] pr-3">
+                      <ul className="space-y-3">
+                        {uploadedDocuments.map((doc) => (
+                          <li
+                            key={doc.id}
+                            className="flex items-center justify-between p-3 border rounded-md hover:bg-muted/50"
                             title={doc.name}
                           >
-                            {doc.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-2 flex-shrink-0 min-w-fit">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 p-0 hover:bg-destructive/10 group"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteDocument(doc.id, doc.name);
-                            }}
-                            title={`Delete ${doc.name}`}
-                          >
-                            <Trash2
-                              size={16}
-                              className="text-destructive/70 group-hover:text-destructive"
-                            />
-                          </Button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
+                            <div className="flex items-center space-x-3 min-w-0 flex-1 mr-3">
+                              {doc.name.toLowerCase().endsWith(".pdf") ? (
+                                <File
+                                  size={20}
+                                  className="flex-shrink-0 text-muted-foreground"
+                                />
+                              ) : (
+                                <FileText
+                                  size={20}
+                                  className="flex-shrink-0 text-muted-foreground"
+                                />
+                              )}
+                              <span
+                                className="text-sm font-medium"
+                                title={doc.name}
+                              >
+                                {doc.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-2 flex-shrink-0 min-w-fit">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 p-0 hover:bg-destructive/10 group"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteDocument(doc.id, doc.name);
+                                }}
+                                title={`Delete ${doc.name}`}
+                              >
+                                <Trash2
+                                  size={16}
+                                  className="text-destructive/70 group-hover:text-destructive"
+                                />
+                              </Button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
 
-          <PromptManager />
+              <PromptManager />
+            </>
+          )}
         </div>
       </main>
     </div>
