@@ -22,6 +22,8 @@ import {
   MessageSquare,
   TrendingUp,
   BarChart3,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -54,6 +56,9 @@ interface FeedbackRecord {
   conversation_id: string;
   feedback_type: 'thumbs_up' | 'thumbs_down';
   created_at: string;
+  user_question?: string;
+  ai_response?: string;
+  message_content?: string; // Keep for backward compatibility
   context_info: {
     hasRAGSources?: boolean;
     hasWebSearch?: boolean;
@@ -80,6 +85,7 @@ export default function AdminPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
   const fetchDocuments = useCallback(async () => {
     setFetchError(null);
@@ -238,6 +244,31 @@ export default function AdminPage() {
       return <Badge variant="outline">Web</Badge>;
     }
     return <Badge variant="secondary">General</Badge>;
+  };
+
+  const truncateText = (text: string, maxLength: number = 100): string => {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+  };
+
+  const toggleRowExpansion = (feedbackId: number) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(feedbackId)) {
+        newSet.delete(feedbackId);
+      } else {
+        newSet.add(feedbackId);
+      }
+      return newSet;
+    });
+  };
+
+  const getDisplayText = (feedback: FeedbackRecord, field: 'question' | 'answer'): string => {
+    if (field === 'question') {
+      return feedback.user_question || 'No question recorded';
+    } else {
+      return feedback.ai_response || feedback.message_content || 'No response recorded';
+    }
   };
 
   const toggleAnalytics = () => {
@@ -617,47 +648,112 @@ export default function AdminPage() {
                     <Card>
                       <CardHeader>
                         <CardTitle>Recent Feedback</CardTitle>
-                        <CardDescription>Latest user feedback on AI responses</CardDescription>
+                        <CardDescription>Latest user feedback on AI responses - click to expand Q&A</CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="overflow-x-auto">
                           <Table>
                             <TableHeader>
                               <TableRow>
+                                <TableHead className="min-w-[40px]"></TableHead>
                                 <TableHead className="min-w-[120px]">Time</TableHead>
                                 <TableHead className="min-w-[100px]">Feedback</TableHead>
                                 <TableHead className="min-w-[80px]">Context</TableHead>
+                                <TableHead className="min-w-[200px]">Question Preview</TableHead>
                                 <TableHead className="min-w-[100px]">Conversation</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                            {recentFeedback.map((feedback) => (
-                              <TableRow key={feedback.id}>
-                                <TableCell>
-                                  <div className="text-sm">
-                                    <div>{formatDate(feedback.created_at)}</div>
-                                    <div className="text-gray-500">{formatTime(feedback.created_at)}</div>
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  {feedback.feedback_type === 'thumbs_up' ? (
-                                    <Badge className="bg-green-100 text-green-800">
-                                      <ThumbsUp className="w-3 h-3 mr-1" />
-                                      Positive
-                                    </Badge>
-                                  ) : (
-                                    <Badge className="bg-red-100 text-red-800">
-                                      <ThumbsDown className="w-3 h-3 mr-1" />
-                                      Negative
-                                    </Badge>
+                            {recentFeedback.map((feedback) => {
+                              const isExpanded = expandedRows.has(feedback.id);
+                              const userQuestion = getDisplayText(feedback, 'question');
+                              const aiResponse = getDisplayText(feedback, 'answer');
+                              
+                              return (
+                                <React.Fragment key={feedback.id}>
+                                  <TableRow 
+                                    className="cursor-pointer hover:bg-muted/50"
+                                    onClick={() => toggleRowExpansion(feedback.id)}
+                                  >
+                                    <TableCell>
+                                      {isExpanded ? (
+                                        <ChevronDown className="w-4 h-4 text-gray-500" />
+                                      ) : (
+                                        <ChevronRight className="w-4 h-4 text-gray-500" />
+                                      )}
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="text-sm">
+                                        <div>{formatDate(feedback.created_at)}</div>
+                                        <div className="text-gray-500">{formatTime(feedback.created_at)}</div>
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      {feedback.feedback_type === 'thumbs_up' ? (
+                                        <Badge className="bg-green-100 text-green-800">
+                                          <ThumbsUp className="w-3 h-3 mr-1" />
+                                          Positive
+                                        </Badge>
+                                      ) : (
+                                        <Badge className="bg-red-100 text-red-800">
+                                          <ThumbsDown className="w-3 h-3 mr-1" />
+                                          Negative
+                                        </Badge>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>{getContextBadge(feedback.context_info)}</TableCell>
+                                    <TableCell className="max-w-[200px]">
+                                      <div className="text-sm text-gray-600 truncate">
+                                        {truncateText(userQuestion, 80)}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="font-mono text-xs">
+                                      {feedback.conversation_id.substring(0, 12)}...
+                                    </TableCell>
+                                  </TableRow>
+                                  
+                                  {isExpanded && (
+                                    <TableRow>
+                                      <TableCell colSpan={6} className="bg-muted/20 p-4">
+                                        <div className="space-y-4">
+                                          <div>
+                                            <h4 className="font-semibold text-sm mb-2 flex items-center text-gray-700 dark:text-gray-300">
+                                              <MessageSquare className="w-4 h-4 mr-2" />
+                                              User Question:
+                                            </h4>
+                                            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border-l-4 border-blue-200 dark:border-blue-400">
+                                              <p className="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
+                                                {userQuestion}
+                                              </p>
+                                            </div>
+                                          </div>
+                                          
+                                          <div>
+                                            <h4 className="font-semibold text-sm mb-2 flex items-center text-gray-700 dark:text-gray-300">
+                                              <MessageSquare className="w-4 h-4 mr-2" />
+                                              AI Response:
+                                            </h4>
+                                            <div className="bg-gray-50 dark:bg-gray-800/50 p-3 rounded-md border-l-4 border-gray-200 dark:border-gray-600">
+                                              <p className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                                                {aiResponse}
+                                              </p>
+                                            </div>
+                                          </div>
+                                          
+                                          {feedback.context_info && (
+                                            <div className="text-xs text-gray-500 pt-2 border-t">
+                                              <strong>Context:</strong> {' '}
+                                              {feedback.context_info.hasRAGSources && `RAG Sources: ${feedback.context_info.ragSources?.length || 0} documents`}
+                                              {feedback.context_info.hasWebSearch && ' | Web Search enabled'}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
                                   )}
-                                </TableCell>
-                                <TableCell>{getContextBadge(feedback.context_info)}</TableCell>
-                                <TableCell className="font-mono text-xs">
-                                  {feedback.conversation_id.substring(0, 12)}...
-                                </TableCell>
-                              </TableRow>
-                            ))}
+                                </React.Fragment>
+                              );
+                            })}
                             </TableBody>
                           </Table>
                         </div>

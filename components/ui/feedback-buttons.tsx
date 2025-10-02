@@ -7,7 +7,9 @@ import { cn } from "@/lib/utils";
 
 interface FeedbackButtonsProps {
   conversationId: string;
-  messageContent: string;
+  messageContent: string; // Keep for backward compatibility
+  userQuestion?: string; // New: the user's original question/prompt
+  aiResponse?: string; // New: the AI's response content (if different from messageContent)
   contextInfo?: {
     hasRAGSources?: boolean;
     hasWebSearch?: boolean;
@@ -27,6 +29,8 @@ type FeedbackState = 'none' | 'thumbs_up' | 'thumbs_down' | 'loading';
 export const FeedbackButtons: React.FC<FeedbackButtonsProps> = ({
   conversationId,
   messageContent,
+  userQuestion,
+  aiResponse,
   contextInfo,
   className
 }) => {
@@ -60,9 +64,11 @@ export const FeedbackButtons: React.FC<FeedbackButtonsProps> = ({
         },
         body: JSON.stringify({
           conversationId,
-          messageContent,
+          messageContent, // Keep for backward compatibility
           feedbackType,
-          contextInfo
+          contextInfo,
+          userQuestion,
+          aiResponse: aiResponse || messageContent // Use aiResponse if provided, fallback to messageContent
         })
       });
 

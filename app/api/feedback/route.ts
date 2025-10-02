@@ -3,8 +3,10 @@ import { supabase } from "@/lib/supabaseClient";
 
 interface FeedbackRequest {
   conversationId: string;
-  messageContent: string;
+  messageContent: string; // Keep for backward compatibility
   feedbackType: 'thumbs_up' | 'thumbs_down';
+  userQuestion?: string; // New: the user's original question/prompt
+  aiResponse?: string; // New: the AI's response content
   contextInfo?: {
     hasRAGSources?: boolean;
     hasWebSearch?: boolean;
@@ -41,7 +43,9 @@ export async function POST(req: NextRequest) {
     console.log('Feedback API: Storing feedback:', {
       conversationId: body.conversationId,
       feedbackType: body.feedbackType,
-      hasContext: !!body.contextInfo
+      hasContext: !!body.contextInfo,
+      hasQuestion: !!body.userQuestion,
+      hasResponse: !!body.aiResponse
     });
 
     // Check if feedback already exists for this message
@@ -71,6 +75,8 @@ export async function POST(req: NextRequest) {
         .update({
           feedback_type: body.feedbackType,
           context_info: body.contextInfo || null,
+          user_question: body.userQuestion || null,
+          ai_response: body.aiResponse || body.messageContent, // Use aiResponse if provided, fallback to messageContent
           updated_at: new Date().toISOString()
         })
         .eq('id', existingFeedback.id)
@@ -94,9 +100,11 @@ export async function POST(req: NextRequest) {
         .from('chat_feedback')
         .insert({
           conversation_id: body.conversationId,
-          message_content: body.messageContent,
+          message_content: body.messageContent, // Keep for backward compatibility
           feedback_type: body.feedbackType,
-          context_info: body.contextInfo || null
+          context_info: body.contextInfo || null,
+          user_question: body.userQuestion || null,
+          ai_response: body.aiResponse || body.messageContent // Use aiResponse if provided, fallback to messageContent
         })
         .select()
         .single();
@@ -144,7 +152,7 @@ export async function GET(req: NextRequest) {
       // Get feedback for a specific conversation
       const { data, error } = await supabase
         .from('chat_feedback')
-        .select('id, feedback_type, created_at, context_info')
+        .select('id, feedback_type, created_at, context_info, user_question, ai_response, message_content')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: false });
 
@@ -286,7 +294,7 @@ export async function GET(req: NextRequest) {
       
       const { data, error } = await supabase
         .from('chat_feedback')
-        .select('id, conversation_id, feedback_type, created_at, context_info')
+        .select('id, conversation_id, feedback_type, created_at, context_info, user_question, ai_response, message_content')
         .order('created_at', { ascending: false })
         .limit(limit);
 

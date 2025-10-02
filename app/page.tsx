@@ -1370,6 +1370,37 @@ const AssistantActionBar: FC<AssistantActionBarProps> = ({
   // Generate conversation ID from thread ID or create a session-based ID
   const conversationId = thread.threadId || `session-${Date.now()}`;
   
+  // Find the user's question by looking for the preceding user message
+  const getUserQuestion = (): string | undefined => {
+    try {
+      const messages = thread.messages || [];
+      const currentMessageIndex = messages.findIndex(msg => msg.id === messageId);
+      
+      if (currentMessageIndex > 0) {
+        // Look backwards for the most recent user message
+        for (let i = currentMessageIndex - 1; i >= 0; i--) {
+          const message = messages[i];
+          if (message.role === 'user' && message.content) {
+            // Extract text content from user message
+            if (Array.isArray(message.content)) {
+              const textPart = message.content.find(part => part.type === 'text' && 'text' in part);
+              if (textPart && 'text' in textPart) {
+                return textPart.text as string;
+              }
+            } else if (typeof message.content === 'string') {
+              return message.content;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Error extracting user question:', error);
+    }
+    return undefined;
+  };
+
+  const userQuestion = getUserQuestion();
+  
   // Prepare context info for feedback
   const contextInfo = {
     hasRAGSources: ragSources.length > 0,
@@ -1421,6 +1452,8 @@ const AssistantActionBar: FC<AssistantActionBarProps> = ({
           <FeedbackButtons
             conversationId={conversationId}
             messageContent={messageText}
+            userQuestion={userQuestion}
+            aiResponse={messageText}
             contextInfo={contextInfo}
             className="ml-1"
           />

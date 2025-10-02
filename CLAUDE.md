@@ -161,7 +161,6 @@ migrations/
   - Data validation on both frontend and backend
   - Safe percentage calculations to prevent division by zero
   - Graceful handling of invalid dates and malformed data
-  - Comprehensive error messages for different failure scenarios
   - Database constraints and triggers for data integrity
 
 ## Model Updates
@@ -173,3 +172,7 @@ migrations/
   - `gemini-2.5-flash` (recommended) - Best price-performance for RAG applications
   - `gemini-2.5-pro` - Most powerful model with advanced capabilities
   - `gemini-2.5-flash-lite` - Cost-efficient option for high-volume usage
+
+## Memories
+
+- Fixed recent feedback to include the question and answer that was asked and either thumbsed up or down
