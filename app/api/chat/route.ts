@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 
 // --- Configuration Constants ---
 const OPENAI_EMBEDDING_MODEL = "text-embedding-ada-002";
-const GEMINI_CHAT_MODEL = "gemini-1.5-flash-latest";
+const GEMINI_CHAT_MODEL = "gemini-2.5-flash";
 const SIMILARITY_THRESHOLD = 0.7;
 const MATCH_COUNT = 10;
 // -----------------------------

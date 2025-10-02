@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -15,6 +17,11 @@ import {
   File,
   FileText,
   Trash2,
+  ThumbsUp,
+  ThumbsDown,
+  MessageSquare,
+  TrendingUp,
+  BarChart3,
 } from "lucide-react";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -28,6 +35,36 @@ interface UploadedDocument {
   name: string;
 }
 
+interface FeedbackStats {
+  totalFeedback: number;
+  thumbsUp: number;
+  thumbsDown: number;
+  positiveRate: number;
+  dailyBreakdown: Array<{
+    date: string;
+    thumbsUp: number;
+    thumbsDown: number;
+    total: number;
+    contextType: string;
+  }>;
+}
+
+interface FeedbackRecord {
+  id: number;
+  conversation_id: string;
+  feedback_type: 'thumbs_up' | 'thumbs_down';
+  created_at: string;
+  context_info: {
+    hasRAGSources?: boolean;
+    hasWebSearch?: boolean;
+    ragSources?: Array<{
+      documentId?: string;
+      documentName?: string;
+      pageNumber?: number;
+    }>;
+  };
+}
+
 export default function AdminPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -36,6 +73,13 @@ export default function AdminPage() {
     UploadedDocument[]
   >([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  
+  // Feedback analytics state
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
+  const [recentFeedback, setRecentFeedback] = useState<FeedbackRecord[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const fetchDocuments = useCallback(async () => {
     setFetchError(null);
@@ -54,9 +98,171 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadFeedbackAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    
+    try {
+      // Fetch analytics data with timeout
+      const analyticsController = new AbortController();
+      const analyticsTimeout = setTimeout(() => analyticsController.abort(), 10000); // 10 second timeout
+      
+      const analyticsResponse = await fetch('/api/feedback?analytics=true', {
+        signal: analyticsController.signal
+      });
+      clearTimeout(analyticsTimeout);
+      
+      if (!analyticsResponse.ok) {
+        const errorData = await analyticsResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${analyticsResponse.status}`);
+      }
+      
+      const analyticsData = await analyticsResponse.json();
+      
+      // Validate analytics data structure
+      if (!analyticsData.stats || typeof analyticsData.stats !== 'object') {
+        throw new Error('Invalid analytics data format');
+      }
+      
+      const stats = analyticsData.stats;
+      if (typeof stats.totalFeedback !== 'number' || 
+          typeof stats.thumbsUp !== 'number' || 
+          typeof stats.thumbsDown !== 'number' ||
+          typeof stats.positiveRate !== 'number') {
+        throw new Error('Invalid statistics data format');
+      }
+      
+      // Fetch recent feedback with timeout
+      const feedbackController = new AbortController();
+      const feedbackTimeout = setTimeout(() => feedbackController.abort(), 10000);
+      
+      const feedbackResponse = await fetch('/api/feedback?recent=10', {
+        signal: feedbackController.signal
+      });
+      clearTimeout(feedbackTimeout);
+      
+      if (!feedbackResponse.ok) {
+        const errorData = await feedbackResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${feedbackResponse.status}`);
+      }
+      
+      const feedbackData = await feedbackResponse.json();
+      
+      // Validate feedback data structure
+      if (!Array.isArray(feedbackData.feedback)) {
+        console.warn('Invalid feedback data format, using empty array');
+        feedbackData.feedback = [];
+      }
+      
+      // Validate each feedback item
+      const validatedFeedback = feedbackData.feedback.filter((item: any) => {
+        return item && 
+               typeof item.id === 'number' && 
+               typeof item.conversation_id === 'string' &&
+               ['thumbs_up', 'thumbs_down'].includes(item.feedback_type) &&
+               typeof item.created_at === 'string';
+      });
+      
+      setFeedbackStats(stats);
+      setRecentFeedback(validatedFeedback);
+      
+      console.log('Admin: Successfully loaded analytics data', {
+        totalFeedback: stats.totalFeedback,
+        recentFeedbackCount: validatedFeedback.length
+      });
+      
+    } catch (err) {
+      console.error('Admin: Failed to load analytics data:', err);
+      
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          setAnalyticsError('Request timed out. Please try again.');
+        } else if (err.message.includes('NetworkError') || err.message.includes('fetch')) {
+          setAnalyticsError('Network error. Please check your connection and try again.');
+        } else {
+          setAnalyticsError(err.message);
+        }
+      } else {
+        setAnalyticsError('An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments]);
+
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date string:', dateString);
+        return 'Invalid Date';
+      }
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.warn('Error formatting date:', dateString, error);
+      return 'Invalid Date';
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid time string:', dateString);
+        return 'Invalid Time';
+      }
+      return date.toLocaleTimeString();
+    } catch (error) {
+      console.warn('Error formatting time:', dateString, error);
+      return 'Invalid Time';
+    }
+  };
+
+  const safePercentage = (numerator: number, denominator: number): number => {
+    if (denominator === 0 || !isFinite(denominator) || !isFinite(numerator)) {
+      return 0;
+    }
+    const result = Math.round((numerator / denominator) * 100);
+    return isFinite(result) ? result : 0;
+  };
+
+  const getContextBadge = (contextInfo: FeedbackRecord['context_info']) => {
+    if (contextInfo?.hasRAGSources) {
+      return <Badge variant="secondary">RAG</Badge>;
+    }
+    if (contextInfo?.hasWebSearch) {
+      return <Badge variant="outline">Web</Badge>;
+    }
+    return <Badge variant="secondary">General</Badge>;
+  };
+
+  const toggleAnalytics = () => {
+    setShowAnalytics(!showAnalytics);
+    if (!showAnalytics && !feedbackStats) {
+      loadFeedbackAnalytics();
+    }
+  };
+
+  // Check database health
+  const checkDatabaseHealth = useCallback(async () => {
+    try {
+      // Quick health check - try to fetch a small amount of data
+      const response = await fetch('/api/feedback?recent=1');
+      if (!response.ok) {
+        console.warn('Database health check failed:', response.status);
+        return false;
+      }
+      const data = await response.json();
+      return Array.isArray(data.feedback);
+    } catch (error) {
+      console.warn('Database health check error:', error);
+      return false;
+    }
+  }, []);
 
   const handleFileSelected = useCallback((files: File[]) => {
     setSelectedFiles(files);
@@ -253,6 +459,13 @@ export default function AdminPage() {
           </Link>
         </div>
         <div className="flex items-center space-x-2">
+          <Button
+            variant={showAnalytics ? "default" : "outline"}
+            onClick={toggleAnalytics}
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            {showAnalytics ? "Hide Analytics" : "Show Analytics"}
+          </Button>
           <Link href="/" passHref>
             <Button variant="outline">Back to Chat</Button>
           </Link>
@@ -262,6 +475,218 @@ export default function AdminPage() {
 
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-8">
+          {/* Feedback Analytics Section */}
+          {showAnalytics && (
+            <>
+              {analyticsLoading && (
+                <Card>
+                  <CardContent className="pt-6 text-center">
+                    <p className="text-gray-600">Loading analytics data...</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {analyticsError && (
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-center">
+                      <p className="text-red-500 mb-3">⚠️ {analyticsError}</p>
+                      <div className="space-x-2">
+                        <Button onClick={loadFeedbackAnalytics} variant="outline" disabled={analyticsLoading}>
+                          {analyticsLoading ? 'Retrying...' : 'Retry'}
+                        </Button>
+                        <Button onClick={() => setShowAnalytics(false)} variant="ghost">
+                          Hide Analytics
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {feedbackStats && (
+                <>
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total Feedback</CardTitle>
+                        <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">{feedbackStats.totalFeedback}</div>
+                        <p className="text-xs text-muted-foreground">
+                          User responses rated
+                        </p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Positive Feedback</CardTitle>
+                        <ThumbsUp className="h-4 w-4 text-green-600" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-green-600">{feedbackStats.thumbsUp}</div>
+                        <p className="text-xs text-muted-foreground">
+                          {safePercentage(feedbackStats.thumbsUp, feedbackStats.totalFeedback)}% of rated responses
+                        </p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Negative Feedback</CardTitle>
+                        <ThumbsDown className="h-4 w-4 text-red-600" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-red-600">{feedbackStats.thumbsDown}</div>
+                        <p className="text-xs text-muted-foreground">
+                          {safePercentage(feedbackStats.thumbsDown, feedbackStats.totalFeedback)}% of rated responses
+                        </p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Quality Score</CardTitle>
+                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold">
+                          {safePercentage(feedbackStats.thumbsUp, feedbackStats.totalFeedback)}%
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Positive feedback rate
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Daily Breakdown Table */}
+                  {feedbackStats.dailyBreakdown && Array.isArray(feedbackStats.dailyBreakdown) && feedbackStats.dailyBreakdown.length > 0 && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Daily Feedback Breakdown</CardTitle>
+                        <CardDescription>Response quality metrics by day</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="min-w-[100px]">Date</TableHead>
+                                <TableHead className="text-center min-w-[80px]">👍 Positive</TableHead>
+                                <TableHead className="text-center min-w-[80px]">👎 Negative</TableHead>
+                                <TableHead className="text-center min-w-[60px]">Total</TableHead>
+                                <TableHead className="text-center min-w-[80px]">Score</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                          <TableBody>
+                            {feedbackStats.dailyBreakdown
+                              .filter(day => day && typeof day.date === 'string' && 
+                                           typeof day.thumbsUp === 'number' && 
+                                           typeof day.thumbsDown === 'number' &&
+                                           typeof day.total === 'number')
+                              .map((day, index) => (
+                              <TableRow key={day.date || index}>
+                                <TableCell>{formatDate(day.date)}</TableCell>
+                                <TableCell className="text-center text-green-600 font-medium">
+                                  {day.thumbsUp} ({safePercentage(day.thumbsUp, day.total)}%)
+                                </TableCell>
+                                <TableCell className="text-center text-red-600 font-medium">
+                                  {day.thumbsDown} ({safePercentage(day.thumbsDown, day.total)}%)
+                                </TableCell>
+                                <TableCell className="text-center font-medium">{day.total}</TableCell>
+                                <TableCell className="text-center">
+                                  <Badge variant={day.total > 0 && safePercentage(day.thumbsUp, day.total) > 50 ? "default" : "secondary"}>
+                                    {safePercentage(day.thumbsUp, day.total)}%
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Recent Feedback Table */}
+                  {recentFeedback.length > 0 && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Recent Feedback</CardTitle>
+                        <CardDescription>Latest user feedback on AI responses</CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="min-w-[120px]">Time</TableHead>
+                                <TableHead className="min-w-[100px]">Feedback</TableHead>
+                                <TableHead className="min-w-[80px]">Context</TableHead>
+                                <TableHead className="min-w-[100px]">Conversation</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                            {recentFeedback.map((feedback) => (
+                              <TableRow key={feedback.id}>
+                                <TableCell>
+                                  <div className="text-sm">
+                                    <div>{formatDate(feedback.created_at)}</div>
+                                    <div className="text-gray-500">{formatTime(feedback.created_at)}</div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  {feedback.feedback_type === 'thumbs_up' ? (
+                                    <Badge className="bg-green-100 text-green-800">
+                                      <ThumbsUp className="w-3 h-3 mr-1" />
+                                      Positive
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-red-100 text-red-800">
+                                      <ThumbsDown className="w-3 h-3 mr-1" />
+                                      Negative
+                                    </Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell>{getContextBadge(feedback.context_info)}</TableCell>
+                                <TableCell className="font-mono text-xs">
+                                  {feedback.conversation_id.substring(0, 12)}...
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {feedbackStats.totalFeedback === 0 && (
+                    <Card>
+                      <CardContent className="pt-6 text-center">
+                        <div className="py-8">
+                          <p className="text-gray-600 text-lg mb-2">📊 No feedback data available yet</p>
+                          <p className="text-sm text-gray-500 mb-4">
+                            Users need to rate AI responses using the thumbs up/down buttons to see analytics here.
+                          </p>
+                          <div className="text-xs text-gray-400 space-y-1">
+                            <p>• Feedback buttons appear below AI responses in the chat</p>
+                            <p>• Data will automatically appear here once users start rating</p>
+                            <p>• Analytics include quality scores, trends, and context analysis</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Upload New Document</CardTitle>

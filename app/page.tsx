@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import React, { type FC } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -48,6 +49,7 @@ import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { usePrompts } from "@/components/prompt-dropdown";
 import { ImageUploadModal } from "@/components/image-upload-modal";
+import { FeedbackButtons } from "@/components/ui/feedback-buttons";
 import { Wine, Grape, Search } from "lucide-react";
 
 interface DocumentChunk {
@@ -292,9 +294,23 @@ const ChatPageLayout: FC = () => {
   return (
     <div className="flex h-screen bg-[#191a1a] text-foreground">
       {/* Slim Sidebar: grape icon only (starts a new chat) */}
-      <aside className="w-[72px] shrink-0 border-r border-foreground/10 bg-[#151616] flex flex-col items-center">
+      <aside className="w-[72px] shrink-0 border-r border-foreground/10 bg-[#151616] flex flex-col items-center justify-between">
         <div className="p-3">
           <NewChatButton />
+        </div>
+        <div className="p-3">
+          <Link href="/admin" className="group">
+            <div className="w-10 h-10 rounded-md bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="w-5 h-5 text-gray-400 group-hover:text-gray-300"
+              >
+                <path fillRule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.047 7.047 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+              </svg>
+            </div>
+          </Link>
         </div>
       </aside>
 
@@ -1140,6 +1156,12 @@ const PerplexityAssistantMessage: FC = () => {
   const grounding = messageGrounding.get(message.id);
 
   console.log("RAG Sources for message:", message.id, ragSources);
+  console.log("Message content for feedback:", {
+    messageId: message.id,
+    hasContent: !!message.content,
+    messageTextLength: messageText.length,
+    messageTextPreview: messageText.substring(0, 100) + (messageText.length > 100 ? '...' : '')
+  });
 
   // Create blended sources combining RAG and web sources
   const blendedSources: BlendedSource[] = [
@@ -1319,19 +1341,54 @@ const PerplexityAssistantMessage: FC = () => {
           </div>
         )}
       </div>
-      <AssistantActionBar />
+      <AssistantActionBar 
+        messageId={message.id}
+        messageText={messageText}
+        ragSources={ragSources}
+        grounding={grounding}
+      />
       <BranchPicker className="col-start-1 col-span-2 row-start-2 -ml-2 mr-2 mt-2" />
     </MessagePrimitive.Root>
   );
 };
 
-const AssistantActionBar: FC = () => {
+interface AssistantActionBarProps {
+  messageId: string;
+  messageText: string;
+  ragSources: DocumentChunk[];
+  grounding: GroundingMetadata | undefined;
+}
+
+const AssistantActionBar: FC<AssistantActionBarProps> = ({ 
+  messageId, 
+  messageText, 
+  ragSources, 
+  grounding 
+}) => {
+  const thread = useThread();
+  
+  // Generate conversation ID from thread ID or create a session-based ID
+  const conversationId = thread.threadId || `session-${Date.now()}`;
+  
+  // Prepare context info for feedback
+  const contextInfo = {
+    hasRAGSources: ragSources.length > 0,
+    hasWebSearch: !!grounding?.groundingChunks?.length,
+    ragSources: ragSources.map(source => ({
+      documentId: source.document_id?.toString(),
+      documentName: source.name,
+      pageNumber: source.page_number
+    })),
+    webSearchQueries: grounding?.webSearchQueries || [],
+    messageId: messageId
+  };
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
       autohideFloat="single-branch"
-      className="text-muted-foreground col-start-1 col-span-2 row-start-2 mt-2 flex gap-1"
+      className="text-muted-foreground col-start-1 col-span-2 row-start-2 mt-2 flex gap-1 items-center"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton
@@ -1356,6 +1413,19 @@ const AssistantActionBar: FC = () => {
           </TooltipIconButton>
         </ActionBarPrimitive.Reload>
       </ThreadPrimitive.If>
+      
+      {/* Add feedback buttons with a small separator - only show if there's valid message content */}
+      {messageText && messageText.trim().length > 0 && (
+        <>
+          <div className="mx-2 h-4 w-px bg-gray-600" />
+          <FeedbackButtons
+            conversationId={conversationId}
+            messageContent={messageText}
+            contextInfo={contextInfo}
+            className="ml-1"
+          />
+        </>
+      )}
     </ActionBarPrimitive.Root>
   );
 };

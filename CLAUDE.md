@@ -30,7 +30,7 @@ GEMINI_API_KEY=your_google_gemini_api_key
 - **UI**: React 19 with Shadcn UI components
 - **Vector Database**: Supabase (PostgreSQL with pgvector)
 - **Embedding Model**: OpenAI `text-embedding-ada-002`
-- **Chat LLM**: Google Gemini `gemini-1.5-flash-latest`
+- **Chat LLM**: Google Gemini `gemini-2.5-flash`
 - **PDF Processing**: `pdfjs-dist` for client-side parsing
 - **Text Chunking**: LangChain `RecursiveCharacterTextSplitter`
 - **Streaming**: Custom Vercel AI SDK compatible streaming
@@ -49,10 +49,15 @@ GEMINI_API_KEY=your_google_gemini_api_key
 - `/api/upload` - Processes document uploads with embedding generation
 - `/api/documents/[id]` - Document metadata retrieval
 - `/api/pdf-content/[id]` - PDF content serving
+- `/api/feedback` - Stores user feedback (thumbs up/down) on AI responses
+  - GET with `?analytics=true` - Returns comprehensive feedback statistics
+  - GET with `?recent=N` - Returns N most recent feedback entries
+  - GET with `?conversationId=X` - Returns feedback for specific conversation
 
 **Database Schema** (Supabase):
 - `documents` table: stores document metadata and file paths
 - `document_chunks` table: stores text chunks with embeddings (vector dimension 1536)
+- `chat_feedback` table: stores user feedback on AI responses with context data
 - `match_document_chunks` function: vector similarity search with cosine distance
 
 ### RAG Pipeline
@@ -75,6 +80,7 @@ GEMINI_API_KEY=your_google_gemini_api_key
 - **Source Deduplication**: Shows one citation per document to avoid redundancy
 - **Web Search Integration**: Google Search Retrieval through Gemini API when enabled
 - **Blended Sources**: Combines RAG sources and web search results in unified citation system
+- **User Feedback System**: Thumbs up/down buttons on AI responses with analytics tracking
 - **Australian English**: Configured for Australian spelling conventions
 
 ## File Structure
@@ -85,6 +91,7 @@ app/
 ├── api/upload/route.ts        # Document processing and storage
 ├── api/documents/[id]/route.ts # Document metadata API
 ├── api/pdf-content/[id]/route.ts # PDF content serving
+├── api/feedback/route.ts      # User feedback storage and analytics
 ├── page.tsx                   # Main chat interface
 ├── layout.tsx                 # Root layout
 └── globals.css               # Global styles
@@ -93,7 +100,9 @@ components/
 ├── assistant-ui/             # Chat UI components
 ├── pdf-viewer.tsx           # PDF display component
 ├── flowing-prompts.tsx      # Welcome screen prompts
-└── ui/                      # Shadcn UI components
+└── ui/
+    ├── feedback-buttons.tsx  # Thumbs up/down feedback component
+    └── ...                   # Other Shadcn UI components
 
 contexts/
 └── pdf-viewer-context.tsx   # PDF viewer state management
@@ -101,6 +110,11 @@ contexts/
 lib/
 ├── supabaseClient.ts        # Supabase client configuration
 └── utils.ts                 # Utility functions
+
+migrations/
+├── 001_initial_schema.sql   # Initial document and chunks tables
+├── 002_create_chat_feedback_table.sql # Feedback system schema
+└── 003_improve_feedback_analytics.sql # Enhanced feedback constraints and views
 ```
 
 ## Common Development Patterns
@@ -124,3 +138,38 @@ lib/
 - SQL commands for schema changes should be run in Supabase SQL Editor
 - Remember to update embedding dimensions if changing OpenAI models
 - Add RLS policies when implementing multi-user support
+
+### User Feedback System
+- **Frontend**: `feedback-buttons.tsx` component renders thumbs up/down buttons on AI messages
+- **Backend**: `/api/feedback` endpoint validates and stores feedback with full context
+- **Database**: `chat_feedback` table stores feedback with conversation ID, message content, and context info
+- **Analytics**: Built-in `feedback_analytics` view aggregates feedback trends by date and context type
+- **Admin Dashboard**: `/admin` page includes comprehensive feedback analytics with:
+  - Summary cards showing total feedback, positive/negative counts and percentages
+  - Daily breakdown table with quality scores and context types
+  - Recent feedback activity log
+  - Toggle to show/hide analytics section
+  - Responsive design for mobile and desktop viewing
+  - Advanced error handling with retry mechanisms
+- **Features**: 
+  - Prevents duplicate feedback (users can change their rating)
+  - Captures RAG sources and web search context for analysis
+  - Visual feedback state (green/red highlighting when rated)
+  - Admin access via settings icon in main chat sidebar
+- **Reliability**: 
+  - Request timeouts and abort controllers for API calls
+  - Data validation on both frontend and backend
+  - Safe percentage calculations to prevent division by zero
+  - Graceful handling of invalid dates and malformed data
+  - Comprehensive error messages for different failure scenarios
+  - Database constraints and triggers for data integrity
+
+## Model Updates
+
+### Gemini Model Migration (October 2025)
+- **Current Model**: `gemini-2.5-flash` - Upgraded from deprecated `gemini-pro` and `gemini-1.5-flash-latest`
+- **Reason**: Google deprecated all Gemini 1.0 and 1.5 models, requiring migration to Gemini 2.5 series
+- **Available Alternatives**: 
+  - `gemini-2.5-flash` (recommended) - Best price-performance for RAG applications
+  - `gemini-2.5-pro` - Most powerful model with advanced capabilities
+  - `gemini-2.5-flash-lite` - Cost-efficient option for high-volume usage
